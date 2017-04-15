@@ -2,9 +2,9 @@
 ```
 struct mutex {
 /* 1: unlocked, 0: locked, negative: locked, possible waiters */
-atomic_t	 count;
-spinlock_t	 wait_lock;
-struct list_head	wait_list;
+    atomic_t	 count;
+    spinlock_t	 wait_lock;
+    struct list_head	wait_list;
 #if defined(CONFIG_DEBUG_MUTEXES) || defined(CONFIG_MUTEX_SPIN_ON_OWNER)
 struct task_struct	*owner;
 #endif
@@ -36,14 +36,15 @@ might_sleep();
 * The locking fastpath is the 1->0 transition from
 * 'unlocked' into 'locked' state.
 */
-__mutex_fastpath_lock(&lock->count, __mutex_lock_slowpath);
-mutex_set_owner(lock);
+    __mutex_fastpath_lock(&lock->count, __mutex_lock_slowpath);
+    mutex_set_owner(lock);
 }
 ```
 在mutex_lock中先调用__mutex_fastpath_lock进行快加锁，如果加锁失败则调用__mutex_lock_slowpath进行慢加锁。这里先看一下快加锁的步骤，
 
-### __mutex_lock_slowpath
+### __mutex_fastpath_lock
 ```
+
 static inline void
 __mutex_fastpath_lock(atomic_t *count, void (*fail_fn)(atomic_t *))
 {
@@ -66,7 +67,7 @@ __mutex_fastpath_lock最终会调用atomic_dec_return完成count的操作。
  */
 static __always_inline int atomic_add_return(int i, atomic_t *v)
 {
-return i + xadd(&v->counter, i);
+    return i + xadd(&v->counter, i);
 }
 /**
  * atomic_sub_return - subtract integer and return
@@ -77,7 +78,7 @@ return i + xadd(&v->counter, i);
  */
 static __always_inline int atomic_sub_return(int i, atomic_t *v)
 {
-return atomic_add_return(-i, v);
+    return atomic_add_return(-i, v);
 }
 
 #define atomic_inc_return(v)  (atomic_add_return(1, v))
@@ -146,11 +147,8 @@ __ret对应的是-1，ptr对应的mutex->count。上面的代码执行后，__re
 #include<stdio.h>
 #include <stdlib.h>
 main() {
-
     int i=10,j=11;
-
     asm("xadd %0, %1\n": "+q" (i), "+m" (j): : "memory", "cc");
-
     printf("i=%d j=%d\n",i,j);
 }
 
@@ -215,4 +213,204 @@ Dump of assembler code for function main:
 再回到__xchg_op函数，该函数最终返回的就是mutex->count的原始值。
 
 ### __mutex_lock_slowpath
+__mutex_lock_slowpath最终会走入如下的代码，
+```
+static __always_inline int __sched
+__mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+		    struct lockdep_map *nest_lock, unsigned long ip,
+		    struct ww_acquire_ctx *ww_ctx, const bool use_ww_ctx)
+{
+	struct task_struct *task = current;
+	struct mutex_waiter waiter;
+	unsigned long flags;
+	int ret;
 
+	if (use_ww_ctx) {
+		struct ww_mutex *ww = container_of(lock, struct ww_mutex, base);
+		if (unlikely(ww_ctx == READ_ONCE(ww->ctx)))
+			return -EALREADY;
+	}
+
+	preempt_disable();
+	mutex_acquire_nest(&lock->dep_map, subclass, 0, nest_lock, ip);
+
+	if (mutex_optimistic_spin(lock, ww_ctx, use_ww_ctx)) {
+		/* got the lock, yay! */
+		preempt_enable();
+		return 0;
+	}
+
+	spin_lock_mutex(&lock->wait_lock, flags);
+
+	/*
+	 * Once more, try to acquire the lock. Only try-lock the mutex if
+	 * it is unlocked to reduce unnecessary xchg() operations.
+	 */
+	if (!mutex_is_locked(lock) &&
+	    (atomic_xchg_acquire(&lock->count, 0) == 1))
+		goto skip_wait;
+
+	debug_mutex_lock_common(lock, &waiter);
+	debug_mutex_add_waiter(lock, &waiter, task);
+
+	/* add waiting tasks to the end of the waitqueue (FIFO): */
+	list_add_tail(&waiter.list, &lock->wait_list);
+	waiter.task = task;
+
+	lock_contended(&lock->dep_map, ip);
+
+	for (;;) {
+		/*
+		 * Lets try to take the lock again - this is needed even if
+		 * we get here for the first time (shortly after failing to
+		 * acquire the lock), to make sure that we get a wakeup once
+		 * it's unlocked. Later on, if we sleep, this is the
+		 * operation that gives us the lock. We xchg it to -1, so
+		 * that when we release the lock, we properly wake up the
+		 * other waiters. We only attempt the xchg if the count is
+		 * non-negative in order to avoid unnecessary xchg operations:
+		 */
+		if (atomic_read(&lock->count) >= 0 &&
+		    (atomic_xchg_acquire(&lock->count, -1) == 1))
+			break;
+
+		/*
+		 * got a signal? (This code gets eliminated in the
+		 * TASK_UNINTERRUPTIBLE case.)
+		 */
+		if (unlikely(signal_pending_state(state, task))) {
+			ret = -EINTR;
+			goto err;
+		}
+
+		if (use_ww_ctx && ww_ctx->acquired > 0) {
+			ret = __ww_mutex_lock_check_stamp(lock, ww_ctx);
+			if (ret)
+				goto err;
+		}
+
+		__set_task_state(task, state);
+
+		/* didn't get the lock, go to sleep: */
+		spin_unlock_mutex(&lock->wait_lock, flags);
+		schedule_preempt_disabled();
+		spin_lock_mutex(&lock->wait_lock, flags);
+	}
+	__set_task_state(task, TASK_RUNNING);
+
+	mutex_remove_waiter(lock, &waiter, task);
+	/* set it to 0 if there are no waiters left: */
+	if (likely(list_empty(&lock->wait_list)))
+		atomic_set(&lock->count, 0);
+	debug_mutex_free_waiter(&waiter);
+
+skip_wait:
+	/* got the lock - cleanup and rejoice! */
+	lock_acquired(&lock->dep_map, ip);
+	mutex_set_owner(lock);
+
+	if (use_ww_ctx) {
+		struct ww_mutex *ww = container_of(lock, struct ww_mutex, base);
+		ww_mutex_set_context_slowpath(ww, ww_ctx);
+	}
+
+	spin_unlock_mutex(&lock->wait_lock, flags);
+	preempt_enable();
+	return 0;
+
+err:
+	mutex_remove_waiter(lock, &waiter, task);
+	spin_unlock_mutex(&lock->wait_lock, flags);
+	debug_mutex_free_waiter(&waiter);
+	mutex_release(&lock->dep_map, 1, ip);
+	preempt_enable();
+	return ret;
+}
+```
+上面这个函数主要分为几步，
+
+* 优化的自旋锁
+mutex_optimistic_spin。如果当前锁的拥有者正在其他cpu处理器上运行，则自旋尝试获取锁。如果锁的拥有者不在cpu上运行了或者该进程需要让出cpu则跳出自旋。如果锁的拥有者让出锁了，则结束自旋，并且尝试获取锁，如果获取失败，则获取新的锁拥有者，进入到下一次的自旋。
+
+```
+static bool mutex_optimistic_spin(struct mutex *lock,
+				  struct ww_acquire_ctx *ww_ctx, const bool use_ww_ctx)
+{
+	while (true) {
+		struct task_struct *owner;
+		......
+                // 一次性获取当前锁的拥有者
+		owner = READ_ONCE(lock->owner);
+		if (owner && !mutex_spin_on_owner(lock, owner))
+                        // 如果锁拥有者让出cpu或者当前进程需要被调度，则退出循环
+			break;
+
+		/* Try to acquire the mutex if it is unlocked. */
+                // 尝试获取锁
+		if (mutex_try_to_acquire(lock)) {
+			lock_acquired(&lock->dep_map, ip);
+
+			if (use_ww_ctx) {
+				struct ww_mutex *ww;
+				ww = container_of(lock, struct ww_mutex, base);
+
+				ww_mutex_set_context_fastpath(ww, ww_ctx);
+			}
+
+			mutex_set_owner(lock);
+			osq_unlock(&lock->osq);
+			return true;
+		}
+		......
+	}
+}
+
+static noinline
+bool mutex_spin_on_owner(struct mutex *lock, struct task_struct *owner)
+{
+	bool ret = true;
+
+	rcu_read_lock();
+	while (lock->owner == owner) {
+		/*
+		 * Ensure we emit the owner->on_cpu, dereference _after_
+		 * checking lock->owner still matches owner. If that fails,
+		 * owner might point to freed memory. If it still matches,
+		 * the rcu_read_lock() ensures the memory stays valid.
+		 */
+		barrier();
+ 
+                // 锁拥有者让出cpu或者当前进程需要被调度
+		if (!owner->on_cpu || need_resched()) {
+			ret = false;
+			break;
+		}
+
+		cpu_relax_lowlatency();
+	}
+	rcu_read_unlock();
+
+	return ret;
+}
+```
+
+* 使用spinlock获取自旋锁
+* 再次尝试获取锁，获取成功后释放自旋锁。并且设置当前进程为锁的拥有者。
+```
+if (!mutex_is_locked(lock) &&
+    (atomic_xchg_acquire(&lock->count, 0) == 1))
+    goto skip_wait;
+```
+* 添加到等待队列
+```
+	list_add_tail(&waiter.list, &lock->wait_list);
+	waiter.task = task;
+```
+* 进入到循环体中，如果发现锁被释放了则退出循环。如果没有获取锁，释放自旋锁，进入睡眠等待唤醒。如果唤醒了，则继续获取自旋锁。
+* 跳出循环后，将该进程从等待队列中移除。
+```
+	mutex_remove_waiter(lock, &waiter, task);
+	/* set it to 0 if there are no waiters left: */
+	if (likely(list_empty(&lock->wait_list)))
+		atomic_set(&lock->count, 0);
+```
