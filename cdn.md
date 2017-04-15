@@ -37,7 +37,8 @@
 
 ![http://www.sinaimg.cn/dy/slidenews/2_img/2017_09/786_2070265_985439.jpg](http://www.sinaimg.cn/dy/slidenews/2_img/2017_09/786_2070265_985439.jpg) 
 
-上面这张图来自新浪门户，其地址是http://www.sinaimg.cn/dy/slidenews/2_img/2017_09/786_2070265_985439.jpg，我们通过浏览器来访问这个图片，并且抓包看一下究竟发生了什么。首先将对应的http请求过滤出来，
+
+上面这张图来自新浪门户，其地址是http://www.sinaimg.cn/dy/slidenews/2_img/2017_09/786_2070265_985439.jpg， 我们通过浏览器来访问这个图片，并且抓包看一下究竟发生了什么。首先将对应的http请求过滤出来，
 
 ![http://wx4.sinaimg.cn/large/87f5e2f6ly1fd8yq860f0j20tp0170sm.jpg](http://wx4.sinaimg.cn/large/87f5e2f6ly1fd8yq860f0j20tp0170sm.jpg)
 
