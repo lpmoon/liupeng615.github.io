@@ -407,14 +407,13 @@ func main() {
 我们来运行下看看实际效果吧，
 
 ```
+Pull
+
+{a6b29455-b663-4843-a0e6-004ee5ae6484 2015-11-07 01:34:34.257422044 +0000 UTC pull {sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4} %!s(int64=32) ubuntu http://127.0.0.1:5000/v2/ubuntu/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4} {ad8ccdd7-666e-42af-972e-315b5daa4ab4 172.17.42.1:50079 127.0.0.1:5000 GET docker/1.8.3 go/go1.4.2 git-commit/f4bf5c7 kernel/3.16.0-51-generic os/linux arch/amd64} {} {6c41a5e8cc0d:5000 6733ebcd-15b7-4f16-a072-a9b4892b9368}} 
 
 Pull
 
-{a6b29455-b663-4843-a0e6-004ee5ae6484 2015-11-07 01:34:34.257422044 +0000 UTC pull {{application/octet-stream %!s(int64=32) sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4} %!s(int64=32) ubuntu http://127.0.0.1:5000/v2/ubuntu/blobs/sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4} {ad8ccdd7-666e-42af-972e-315b5daa4ab4 172.17.42.1:50079 127.0.0.1:5000 GET docker/1.8.3 go/go1.4.2 git-commit/f4bf5c7 kernel/3.16.0-51-generic os/linux arch/amd64} {} {6c41a5e8cc0d:5000 6733ebcd-15b7-4f16-a072-a9b4892b9368}} 
-
-Pull
-
-{d8ad7b5a-e770-492b-913e-62e115f8a561 2015-11-07 01:34:34.258076116 +0000 UTC pull {{application/octet-stream %!s(int64=682) sha256:916b974d99af866381ea9e3c929b4709058946bb44f3ad10dacfc6ea3b2a936b} %!s(int64=682) ubuntu http://127.0.0.1:5000/v2/ubuntu/blobs/sha256:916b974d99af866381ea9e3c929b4709058946bb44f3ad10dacfc6ea3b2a936b} {96eaaee5-fde8-475b-a21e-d870f459a3d4 172.17.42.1:50080 127.0.0.1:5000 GET docker/1.8.3 go/go1.4.2 git-commit/f4bf5c7 kernel/3.16.0-51-generic os/linux arch/amd64} {} {6c41a5e8cc0d:5000 6733ebcd-15b7-4f16-a072-a9b4892b9368}}
+{d8ad7b5a-e770-492b-913e-62e115f8a561 2015-11-07 01:34:34.258076116 +0000 UTC pull {sha256:916b974d99af866381ea9e3c929b4709058946bb44f3ad10dacfc6ea3b2a936b} %!s(int64=682) ubuntu http://127.0.0.1:5000/v2/ubuntu/blobs/sha256:916b974d99af866381ea9e3c929b4709058946bb44f3ad10dacfc6ea3b2a936b} {96eaaee5-fde8-475b-a21e-d870f459a3d4 172.17.42.1:50080 127.0.0.1:5000 GET docker/1.8.3 go/go1.4.2 git-commit/f4bf5c7 kernel/3.16.0-51-generic os/linux arch/amd64} {} {6c41a5e8cc0d:5000 6733ebcd-15b7-4f16-a072-a9b4892b9368}}
 
 ```
 
