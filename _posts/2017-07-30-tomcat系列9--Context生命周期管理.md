@@ -256,7 +256,9 @@ conf\context.xml
 下面举个例子来说明下上面的步骤，场景如下，
 > webapps目录下有如下文件ROOT, ROOT.war
 
+
 1. 删除ROOT
+
 这会导致tomcat停止并且移除当前context，然后解压ROOT.war，重新加载context。打印日志如下，
 ```
 信息: Undeploying context [/ROOT]
@@ -269,6 +271,7 @@ conf\context.xml
 ```
 
 2. 删除ROOT.war
+
 这会导致tomcat停止并且移除当前context, 同时删除ROOT目录。打印日志如下，
 ```
 七月 30, 2017 8:19:01 下午 org.apache.catalina.startup.HostConfig undeploy
@@ -278,6 +281,7 @@ conf\context.xml
 ```
 
 3. 在ROOT.war中加入一个文件
+
 如果conf/catalina/localhost/中不包含ROOT.xml，删除ROOT，重新解压war，同时重新加载context。打印日志如下，
 ```
 七月 30, 2017 8:20:34 下午 org.apache.catalina.startup.HostConfig undeploy
@@ -304,6 +308,7 @@ conf\context.xml
 ```
 
 4. 新增ROOT2.war
+
 解压ROOT2.war为ROOT2，加载新的context。打印日志如下，
 ```
 七月 30, 2017 8:21:46 下午 org.apache.catalina.startup.HostConfig deployWAR
@@ -315,6 +320,7 @@ conf\context.xml
 ```
 
 5. 修改conf/context.xml
+
 删除ROOT，重新解压缩war，同时重新加载context。打印日志如下，
 ```
 七月 30, 2017 9:07:35 下午 org.apache.catalina.startup.HostConfig undeploy
@@ -330,6 +336,7 @@ conf\context.xml
 ```
 
 6. 修改conf/catalina/localhost/ROOT.xml
+
 删除ROOT，重新解压缩war，同时重新加载context。打印日志如下，
 ```
 七月 30, 2017 9:10:16 下午 org.apache.catalina.startup.HostConfig undeploy
@@ -345,6 +352,7 @@ conf\context.xml
 ```
 
 7. 修改conf/web.xml
+
 重新加载context。打印日志如下，
 ```
 信息: Reloading context [/ROOT]
