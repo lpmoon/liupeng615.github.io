@@ -28,7 +28,7 @@ StardardEngine启动的时候会调用抽象类ContainerBase的startInternal方�
 
     }
 ```
-这里说尝试启动线程是指该方法有可能不会启动线程，这取决于backgroundProcessorDelay这个值得大小。这个值在StandardEngine被实例化的时候初始化成了10，这个值代表了线程在执行完check任务后会休眠10s种，然后才会进行下一次check。ContainerBackgroundProcessor内部主要逻辑位于processChildren方法中，我们从方法的名字可以看出这个线程主要是针对子容器的处理。
+这里说尝试启动线程是指该方法有可能不会启动线程，这取决于backgroundProcessorDelay这个值的大小。这个属性在StandardEngine被实例化的时候初始化成了10，10代表了每两次check之间间隔时间为10秒钟。ContainerBackgroundProcessor内部主要逻辑位于processChildren方法中，我们从方法的名字可以看出这个线程主要是针对子容器的处理。
 ```
         protected void processChildren(Container container) {
             ClassLoader originalClassLoader = null;
@@ -48,13 +48,13 @@ StardardEngine启动的时候会调用抽象类ContainerBase的startInternal方�
             }
         }
 ```
-processChildren会遍历每个子容器，然后再调用processChild处理这些子容器。StandardEngine的子容器是StandardHost，也就是说最终会进入到StandardHost的backgroundProcess。backgroundProcess方法位于容器的抽象类中，为容器提供后台处理能力，该方法最后会针对当前容器内部的各个LifecycleListener触发PERIODIC_EVENT这个事件。HostConfig是StandardHost的一个LifecycleListener，HostConfig能够处理多种LifecycleEvent，PERIODIC_EVENT就是其中的一个。
+processChildren会遍历每个子容器，然后再递归调用processChildren处理这些子容器。StandardEngine的子容器是StandardHost，也就是说最终会进入到StandardHost的backgroundProcess。backgroundProcess方法位于容器的抽象类中，为容器提供后台处理能力，该方法最后会针对当前容器内部的各个LifecycleListener触发PERIODIC_EVENT这个事件。HostConfig是StandardHost所有LifecycleListener中的一个，也是真正管理context生命周期的LifecycleListener。HostConfig能够处理多种LifecycleEvent，PERIODIC_EVENT就是其中的一个。
 ```
         // Process the event that has occurred
         if (event.getType().equals(Lifecycle.PERIODIC_EVENT)) {
             check();
 ```
-check方法完成所有context的生命周期管理。
+当HostConfig接收到PERIODIC_EVENT这个事件的时候，会调用check方法完成所有context的生命周期管理。
 ```
     /**
      * Check status of all webapps.
@@ -80,13 +80,13 @@ check方法完成所有context的生命周期管理。
         }
     }
 ```
-上面的逻辑主要分为两个部分
-1. 管理已经启动的context
-2. 进入热启动阶段
+check逻辑主要分为两个部分
+1. 管理已经启动的context -> checkResources()
+2. 进入热启动阶段 -> deployApps()
 
 ## 管理已经启动的context
 
-首先看看check是如何处理已经启动的context的，checkResources的代码比较长，
+首先看看check是如何处理已经启动的context的，
 ```
     protected synchronized void checkResources(DeployedApplication app,
             boolean skipFileModificationResolutionCheck) {
@@ -180,6 +180,10 @@ check方法完成所有context的生命周期管理。
         }
     }
 ```
+checkResources的代码比较长，不过大致可以分为两个阶段
+1. redeployResources
+2. reloadResources
+
 ### redeployResources
 
 ***获取context的redeployResources***，一般情况下会包含下面四个resource，
@@ -256,6 +260,7 @@ conf\context.xml
 下面举个例子来说明下上面的步骤，场景如下，
 > webapps目录下有如下文件ROOT, ROOT.war
 
+下面的所有操作都会触发刷新操作。
 
 1. 删除ROOT
 
