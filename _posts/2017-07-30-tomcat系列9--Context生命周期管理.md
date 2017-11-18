@@ -1,3 +1,8 @@
+---
+categories: Tomcat 
+tags: Tomcat 
+---
+
 tomcat管理着context的生命周期，如果在webapps目录下新增war包，则会启动新的context，如果删除war则会停止对应的context。这一切都是通过后台的一个check线程完成。这个线程在StandardEngine启动的时候初始化。
 ```
     @Override

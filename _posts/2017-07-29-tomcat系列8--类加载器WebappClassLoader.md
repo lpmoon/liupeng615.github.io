@@ -1,3 +1,8 @@
+---
+categories: Tomcat
+tags: Tomcat
+---
+
 tomcat以Context作为基本单位部署应用，每个应用在tomcat中对应一个Context。为了使应用之间影响降到最低，每个应用都有自己的类加载器。java默认的类加载机制是父代理模式，也就是加载请求会一直往上代理给父加载器。但是tomcat默认的类加载器没有采用这种模式，下面来看一下tomcat默认的类加载器WebappClassLoader是如何实现的。
 
 整个过程可以大致分为下面的几个步骤，

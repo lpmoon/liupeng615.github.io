@@ -1,3 +1,8 @@
+---
+categories: Tomcat
+tags: Tomcat
+---
+
 tomcat作为web容器，在处理高并发连接方面有着优异的性能，而这都与其精巧的代码架构及实现有关。tomcat将处理请求的整个组件抽象为一个connector，这个connector在tomcat的整个生命周期中负责接受连接，处理请求，返回结果等。比如下面的代码定义了一个处理http请求的connector，
 
 ```

@@ -1,3 +1,8 @@
+---
+categories: Linux 
+tags: Linux 
+---
+
 ## mutex的结构
 ```
 struct mutex {

@@ -1,3 +1,8 @@
+---
+categories: Java
+tags: Java
+---
+ 
  java8中引入了stream，使得在某些情况下代码变得更加简洁以及优雅。举一个例子，假如我们需要在众多单词中筛选出特定字符串开始的单词的总数。在java8之前我们大概会用以下的方式来实现，
 ```
 List<String> words = Arrays.asList("orange", "apple", "banana");

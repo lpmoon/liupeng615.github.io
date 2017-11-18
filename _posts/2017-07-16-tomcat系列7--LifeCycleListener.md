@@ -1,3 +1,8 @@
+---
+categories: Tomcat
+tags: Tomcat
+---
+
 LifecycleListener用于定义生命周期事件监听器，监听的时间包括组件启动和停止等。LifecycleListener的定义如下，
 ···
 public interface LifecycleListener {
