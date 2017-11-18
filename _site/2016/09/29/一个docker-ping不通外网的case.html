@@ -1,0 +1,72 @@
+<p>帮同事解决了一个ping不通一个内网域名的问题，这里记录一下希望给大家解决类似问题一些帮助。</p>
+
+<h2 id="现象">现象</h2>
+
+<p>在容器内部ping一个内网的域名，ping不通。</p>
+
+<h2 id="排查步骤">排查步骤</h2>
+
+<ul>
+  <li>
+    <p>怀疑是不是dns的问题，在容器内直接ping ip地址也是不通的</p>
+  </li>
+  <li>
+    <p>怀疑是宿主机防火墙问题，在目标机上抓包</p>
+  </li>
+</ul>
+
+<blockquote>
+  <p>tcpdump -i eth0 -p icmp</p>
+</blockquote>
+
+<p>没有收到ping包，证明包没有发出去。查看防火墙配置以及和正常机器防火墙配置对比没有发现问题，基本可以排除防火墙drop了ping包的可能性。</p>
+
+<ul>
+  <li>
+    <p>怀疑路由表配置，但是在宿主机上可以正常ping通，证明对应的规则没有问题</p>
+  </li>
+  <li>
+    <p>怀疑是ip_forward参数没有开启导致ping包到了docker0后没有办法转发到宿主机的网卡,</p>
+  </li>
+</ul>
+
+<blockquote>
+  <p>cat /proc/sys/net/ipv4/ip_forward</p>
+</blockquote>
+
+<p>输出的结果是１，证明没有问题</p>
+
+<ul>
+  <li>
+    <p>在容器内部ping宿主机ip发现ping不通，这个现象很奇怪。。</p>
+  </li>
+  <li>
+    <p>在容器内部ping其他容器发现也ping不通，感觉是网桥的转发规则出了问题。再次回到路由表</p>
+  </li>
+</ul>
+
+<blockquote>
+  <p>route　-n</p>
+</blockquote>
+
+<p>发现下面的转发规则，</p>
+
+<blockquote>
+  <p>172.17.0.0  0.0.0.0  255.255.0.0     U     0      0        0 docker0</p>
+</blockquote>
+
+<p>尝试添加如规则，发现提示docker0是down的。</p>
+
+<ul>
+  <li>
+    <p>使用ifconfig查看当前设备，果然没有docker0</p>
+  </li>
+  <li>
+    <p>使用ifconfig up docker0启动docker0，发现ping不通的问题得到了解决。</p>
+  </li>
+</ul>
+
+<h3 id="总结">总结</h3>
+
+<p>docker相关的网络问题大多数与dns, 防火墙(nat, filter等), route, ip_forward, 网桥相关。当遇到问题时，从上面的几个方面入手逐步进行排查，大多数问题都可以很快的解决。</p>
+

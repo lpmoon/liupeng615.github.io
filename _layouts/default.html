@@ -1,18 +1,16 @@
-<!DOCTYPE html>
-<html lang="en-us">
-  
-  {% include head.html %}
+{% include header.html %}
 
-  <body>
-    {% include page-header.html %}
+<div class="wrap">
+    <div class="container container-left">
+        <div class="row">
+            <div class="col-md-3 hidden-xs">
+                {% include sidebar.html %}
+            </div>
+            <div class="col-md-9">
+                {{ content }}
+            </div>
+        </div>
+    </div>
 
-    <section class="main-content">
-      
-      {{ content }}
-
-      {% include page-footer.html %}
-
-    </section>
-
-  </body>
-</html>
+    {% include footer.html %}
+</div>

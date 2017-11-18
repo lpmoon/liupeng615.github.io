@@ -1,0 +1,280 @@
+<p>这几天线上出现了一个诡异的问题，服务器突然出现大量连接停留在close_wait的情况，单机达到了几十万，并且持续很久的时间， 而正常正常情况下只有很少量close_wait.</p>
+
+<p>为了解决这个问题，回顾了一下tcp的相关知识。我们知道tcp关闭连接需要四次握手，</p>
+
+<p><img src="http://ww3.sinaimg.cn/large/87f5e2f6jw1fa3fu4s0ubg20dw0chmxi.gif" alt="http://ww3.sinaimg.cn/large/87f5e2f6jw1fa3fu4s0ubg20dw0chmxi.gif" /></p>
+
+<ul>
+  <li>
+    <p>首先客户端发送FIN到服务器， 客户端的状态变为FIN_WAIT_1, 服务器的状态变为CLOSE_WAIT</p>
+  </li>
+  <li>
+    <p>服务器回一个ACK包给客户端，客户端的状态变为FIN_WAIT_2</p>
+  </li>
+  <li>
+    <p>服务器进行关闭连接等操作，执行完后发送FIN到客户端，服务器状态变为LAST_ACK,客户端变为TIME_WAIT</p>
+  </li>
+  <li>
+    <p>客户端发送ACK到服务器，服务器收到状态变为CLOSED</p>
+  </li>
+</ul>
+
+<p>在正常情况下CLOSE_WAIT只会是一个中间状态，不会持续很长时间。那么在什么情况下会停留在CLOSE_WAIT状态呢？</p>
+
+<blockquote>
+  <p>CLOSE_WAIT means pretty much exactly what it says – the kernel is waiting for the local process to close it’s file descriptor before removing the entry. The TCP connection has been completely torn down and the far end may be under the impression that the connection is finito, but your end is holding onto things.</p>
+</blockquote>
+
+<p><a href="http://serverfault.com/questions/65944/running-lsof-i-shows-a-lot-of-connections-in-close-wait-should-i-worry">http://serverfault.com/questions/65944/running-lsof-i-shows-a-lot-of-connections-in-close-wait-should-i-worry</a></p>
+
+<p>上面这段话可以比较好解释了连接长时间停留在CLOSE_WAIT状态的原因：应用程序迟迟没有调用close方法关闭相应的描述符，内核没有办法将状态迁移到LAST_ACK.</p>
+
+<p>为了验证这个结论，写了一个简单的小程序:</p>
+
+<p>服务器：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+import java.io.IOException;
+
+import java.net.ServerSocket;
+
+import java.net.Socket;
+
+import java.util.concurrent.ExecutorService;
+
+import java.util.concurrent.Executors;
+
+
+
+/**
+
+ * Created by lpmoon on 16-5-19.
+
+ */
+
+public class Server {
+
+    public static void main(String[] args) {
+
+        ExecutorService pool = Executors.newFixedThreadPool(10);
+
+        try {
+
+            ServerSocket ss = new ServerSocket(8888);
+
+            while (true) {
+
+                Socket s = ss.accept();
+
+                pool.submit(new SocketHandleThread(s));
+
+            }
+
+        } catch (IOException e) {
+
+            e.printStackTrace();
+
+        }
+
+    }
+
+}
+
+</code></pre>
+</div>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+import java.io.IOException;
+
+import java.net.Socket;
+
+
+
+/**
+
+ * Created by lpmoon on 16-5-19.
+
+ */
+
+public class SocketHandleThread implements Runnable {
+
+    private Socket socket;
+
+
+
+    public SocketHandleThread(Socket socket) {
+
+        this.socket = socket;
+
+    }
+
+
+
+    public void run() {
+
+        while (true) {
+
+            byte[] bytes = new byte[1024];
+
+            try {
+
+                int count = socket.getInputStream().read(bytes);
+
+                System.out.println(count);
+
+                System.out.println(new String(bytes, 0, count));
+
+            } catch (IOException e) {
+
+                e.printStackTrace();
+
+            }
+
+        }
+
+    }
+
+}
+
+</code></pre>
+</div>
+
+<p>客户端:</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+import java.io.IOException;
+
+import java.net.Socket;
+
+
+
+/**
+
+ * Created by lpmoon on 16-5-19.
+
+ */
+
+public class Client {
+
+    public static void main(String[] args) {
+
+        try {
+
+            Socket socket = new Socket("127.0.0.1", 8888);
+
+            socket.getOutputStream().write("test".getBytes());
+
+            socket.close();
+
+        } catch (IOException e) {
+
+            e.printStackTrace();
+
+        }
+
+    }
+
+}
+
+</code></pre>
+</div>
+
+<p>服务器启动后，启动客户端可以看到服务器打印出了以下的内容，</p>
+
+<blockquote>
+  <p>4</p>
+</blockquote>
+
+<p>test</p>
+
+<p>-1</p>
+
+<p>前面两行都是正常输出， -1代表什么呢？看一看jdk文档里面是怎么说的，</p>
+
+<blockquote>
+  <p>Reads some number of bytes from the input stream and stores them into the buffer array b. The number of bytes actually read is returned as an integer. This method blocks until input data is available, end of file is detected, or an exception is thrown.</p>
+</blockquote>
+
+<p>If the length of b is zero, then no bytes are read and 0 is returned; otherwise, there is an attempt to read at least one byte. If no byte is available because the stream is at the end of the file, the value -1 is returned; otherwise, at least one byte is read and stored into b.</p>
+
+<p>这么看来服务器接受到了客户端发过来的FIN包， 并作出了响应。这个从抓包结果可以看出，</p>
+
+<p><img src="http://ww1.sinaimg.cn/large/87f5e2f6jw1fa3fz3b3iyj20vx018jsh.jpg" alt="http://ww1.sinaimg.cn/large/87f5e2f6jw1fa3fz3b3iyj20vx018jsh.jpg" /></p>
+
+<p>不过我们也可以看出服务器在发送ACK包后就没有其他的动作了。那么我们看看当前的socket停留在什么状态，</p>
+
+<blockquote>
+  <table>
+    <tbody>
+      <tr>
+        <td>Socket ss</td>
+        <td>grep 8888</td>
+      </tr>
+    </tbody>
+  </table>
+</blockquote>
+
+<p>tcp CLOSE-WAIT 0 0 ::ffff:127.0.0.1:8888 ::ffff:127.0.0.1:54897</p>
+
+<p>果然由于服务器没有发送FIN导致socket停留在了CLOSE_WAIT.  但是这还不能说明停留在CLOSE_WAIT状态是由于没有调用close()造成的， 为了进一步验证我们需要修改代码，</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+int count = socket.getInputStream().read(bytes);
+
+if (count != -1) {
+
+    System.out.println(count);
+
+    System.out.println(new String(bytes, 0, count));
+
+} else {
+
+    // close socket
+
+    socket.close();
+
+    break;
+
+}
+
+</code></pre>
+</div>
+
+<p>再次运行后， 可以看到socket被正常关闭了。</p>
+
+<p>由此我们可以得出结论：<strong>被动关闭方在收到了关闭请求后需要显示调用close()方法用于关闭socket， 这样socket才能正常关闭。</strong></p>
+
+<p>虽然不调用close()也不影响主动关闭方关闭连接， 但是如果被动关闭方有大量的CLOSE_WAIT, 新的连接可能会因为获取不到句柄而连接失败， 这是因为CLOSE_WAIT会占用相应的资源，而LINUX分配给用户的句柄是有限。</p>
+
+<p>为了验证CLOSE_WAIT对于服务器的影响， 我们继续修改程序，让客户端不停的建立连接然后关闭连接，而服务器不调用CLOSE方法。在运行过程中服务器会抛出以下的异常，</p>
+
+<blockquote>
+  <p>java.net.SocketException: Too many open files</p>
+</blockquote>
+
+<p>at java.net.PlainSocketImpl.socketAccept(Native Method)</p>
+
+<p>at java.net.AbstractPlainSocketImpl.accept(AbstractPlainSocketImpl.java:409)</p>
+
+<p>at java.net.ServerSocket.implAccept(ServerSocket.java:545)</p>
+
+<p>at java.net.ServerSocket.accept(ServerSocket.java:513)</p>
+
+<p>at Server.main(Server.java:16)</p>
+
+<p>at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)</p>
+
+<p>at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)</p>
+
+<p>at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)</p>
+
+<p>at java.lang.reflect.Method.invoke(Method.java:497)</p>
+
+<p>at com.intellij.rt.execution.application.AppMain.main(AppMain.java:140)&lt;/blockquote&gt;</p>
+
+<p>而如果服务器端调用了close方法，则可以顺利的完成所有请求。可见对于网络IO较高的应用，及时的调用CLOSE方法释放资源是必要的，否则就会造成资源泄露，最终服务器拒绝连接。。</p>
+
+<p>上面讲了一些关于TCP关闭连接的东西，再回到最开始的主题， 线上的服务器为什么会出现这么多CLOSE_WAIT呢？ 由于当前的服务架构是采用Netty作为连接层，所以需要从Netty入手，而Netty整体的架构比较复杂，所以还是单独写一篇文章来讲吧～</p>
+
+<p>希望这个文章能给你带来一些帮助～</p>
+

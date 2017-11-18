@@ -1,0 +1,238 @@
+<p>最近在自己的vps上搭了一个vpn，但是在windows上使用自带的vpn客户端连接后，vpn服务器经常会跑到cpu 100%（服务器的配置是一核）。按照常理说偶尔的cpu飙高是可以理解的，但是持续性的飙到100%就有点莫名其妙了。
+<img src="http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820002346.png" alt="" /></p>
+
+<p>处于好奇，我想确定下究竟是什么地方导致了这种现象的产生以及这种现象是不是正常的。下面的内容叙述了探究这个问题的详细过程，</p>
+
+<p>使用下面的命令可以看到vpn进程对应的所有线程占用cpu资源情况，</p>
+<blockquote>
+  <p>top -H -p 5060</p>
+</blockquote>
+
+<p><img src="http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820002527.png" alt="" /></p>
+
+<p>从上图中可以看到线程4677占用了绝大多数的cpu资源。但是目前还不能确定这个线程做了什么，目前常用的用于黑盒跟踪线程（进程）执行情况的命令有strace, pstack, ltrace等。</p>
+
+<p>我们试一试pstack看一下数据，</p>
+
+<blockquote>
+  <p>pstack 5072</p>
+</blockquote>
+
+<p><img src="http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820002625.png" alt="" /></p>
+
+<p>可见占用高的线程运行在lipthread的recvfrom函数上，但是由于pstack只能打印出瞬时间的调用栈，并没有长时间的跟踪，所以不能说明就是这个函数导致的cpu占用高。</p>
+
+<p>使用strace可以统计进程一段时间的调用信息，</p>
+
+<blockquote>
+  <p>strace -c -p 5072</p>
+</blockquote>
+
+<p>运行上面命令一段时间后停止这个命令可以看到如下的输出结果，</p>
+
+<p><img src="http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820003116.png" alt="" /></p>
+
+<p>可见80%的时间都用于了调用recvfrom方法，可见的确是recvfrom的调用导致的。有了pstack的输出。</p>
+
+<p>但是里面具体的调用位置目前还不是很清楚，我们需要进一步的去追踪。我们知道使用gdb可以对程序进行调试，所以下面轮到gdb出场了，</p>
+
+<blockquote>
+  <p>gdb -p pid 5072</p>
+</blockquote>
+
+<p><img src="http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820003911.png" alt="" /></p>
+
+<p>使用bt命令查看当前的调用栈，奇怪的是只有很简短的调用栈，没有任何有用的信息，同时info locals和disas这些命令也都不能用。看gdb启动的时候的输出,</p>
+
+<blockquote>
+  <p>/opt/vpnserver: No such file or directory</p>
+</blockquote>
+
+<p>去opt目录下的确没有这个文件，这时候突然意识到vpn是通过docker镜像启动的，镜像里面的程序所在的目录由docker统一管理和宿主机的目录相隔离。那么我们进到镜像内部看看，</p>
+
+<blockquote>
+  <p>docker exec -ti vpn /bin/bash</p>
+</blockquote>
+
+<p>由于镜像的pid和宿主机的pid是隔离的，也就是说我们上面查到的pid在宿主机内部是不存在的，所以我们需要使用top重新定位，</p>
+
+<blockquote>
+  <p>top</p>
+</blockquote>
+
+<p>奇怪的是出现了如下的信息，而不是我们想要的进程信息。</p>
+
+<blockquote>
+  <p>TERM environment variable not set.</p>
+</blockquote>
+
+<p>在网上搜索了一下这个错误找到了对应的解决方案，</p>
+
+<blockquote>
+  <p>/usr/bin/top -bcn 1</p>
+</blockquote>
+
+<p><img src="http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820004956.png" alt="" /></p>
+
+<p>下面需要定位到具体的线程，</p>
+
+<blockquote>
+  <p>/usr/bin/top -bcn 1 -H -p 116</p>
+</blockquote>
+
+<p><img src="http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820005130.png" alt="" /></p>
+
+<p>再次使用gdb进行调试，</p>
+
+<blockquote>
+  <p>gdb -p 128</p>
+</blockquote>
+
+<p><img src="http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820005944.png" alt="" /></p>
+
+<p>可以看到gdb成功的读取到了进程的数据，使用bt命令可以看到当前的调用栈，</p>
+
+<blockquote>
+  <p>bt</p>
+</blockquote>
+
+<p><img src="http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820010511.png" alt="" />，但这个调用栈并不是我们想要的，我们需要定位到NatThreadMain这个函数上。使用disas命令可以看到对应函数的汇编指令，</p>
+
+<blockquote>
+  <p>disas RecvFrom</p>
+</blockquote>
+
+<pre>
+(gdb) disas RecvFrom
+Dump of assembler code for function RecvFrom:
+   0x000000000048f220 &lt;+0&gt;:	push   %r13
+   0x000000000048f222 &lt;+2&gt;:	push   %r12
+   0x000000000048f224 &lt;+4&gt;:	push   %rbp
+   0x000000000048f225 &lt;+5&gt;:	push   %rbx
+   0x000000000048f226 &lt;+6&gt;:	mov    %rdi,%rbx
+   0x000000000048f229 &lt;+9&gt;:	sub    $0x28,%rsp
+   0x000000000048f22d &lt;+13&gt;:	test   %rdi,%rdi
+   0x000000000048f230 &lt;+16&gt;:	je     0x48f25d &lt;RecvFrom+61&gt;
+   0x000000000048f232 &lt;+18&gt;:	test   %rsi,%rsi
+   0x000000000048f235 &lt;+21&gt;:	mov    %rsi,%rbp
+   0x000000000048f238 &lt;+24&gt;:	movl   $0x0,0x1e8(%rdi)
+。。。。。。省略
+   0x000000000048f290 &lt;+112&gt;:	lea    0xc(%rsp),%r9
+   0x000000000048f295 &lt;+117&gt;:	lea    0x10(%rsp),%r8
+   0x000000000048f29a &lt;+122&gt;:	xor    %ecx,%ecx
+   0x000000000048f29c &lt;+124&gt;:	movl   $0x10,0xc(%rsp)
+   0x000000000048f2a4 &lt;+132&gt;:	callq  0x405e80 &lt;recvfrom@plt&gt; #####
+   0x000000000048f2a9 &lt;+137&gt;:	test   %eax,%eax
+   0x000000000048f2ab &lt;+139&gt;:	mov    %rax,%r13
+。。。。。。省略
+---Type <return> to continue, or q <return> to quit---
+   0x000000000048f350 &lt;+304&gt;:	cmp    $0x4,%edx
+   0x000000000048f353 &lt;+307&gt;:	je     0x48f365 &lt;RecvFrom+325&gt;
+   0x000000000048f355 &lt;+309&gt;:	cmp    $0xb,%eax
+   0x000000000048f358 &lt;+312&gt;:	sete   %al
+   0x000000000048f35b &lt;+315&gt;:	movzbl %al,%eax
+   0x000000000048f35e &lt;+318&gt;:	neg    %eax
+   0x000000000048f360 &lt;+320&gt;:	jmpq   0x48f25f &lt;RecvFrom+63&gt;
+   0x000000000048f365 &lt;+325&gt;:	movl   $0x1,0x1e8(%rbx)
+   0x000000000048f36f &lt;+335&gt;:	jmpq   0x48f25d &lt;RecvFrom+61&gt;
+End of assembler dump.
+
+&lt;/pre&gt;
+
+在带有#####的地方加上断点，
+
+![](http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820024531.png)
+
+然后继续运行，
+
+断点停在了Breakpoint 1上，
+
+![](http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820024620.png)
+
+使用bt查看当前调用栈，
+
+![](http://zblacker.com/wp-content/uploads/2016/08/QQ截图20160820024711.png)
+
+和我们之前用pstack看到的类似。使用info locals无法找到对应的临时变量，没有办法看到当前栈的具体状况。同时栈只显示了对应的函数，却没有显示对应的文件。
+
+我们需要重新编译代码，将调试信息写入到执行文件中去。找到vpn对应的项目，https://github.com/siomiz/SoftEtherVPN
+
+找到这个文件，https://github.com/siomiz/SoftEtherVPN/blob/master/copyables/build.sh
+
+将其修改为：
+
+<pre>
+#!/bin/bash
+echo "clean_requirements_on_remove=1" &gt;&gt; /etc/yum.conf
+
+yum -y update \
+  &amp;&amp; yum -y install unzip \
+  &amp;&amp; yum -y groupinstall "Development Tools" \
+  &amp;&amp; yum -y install readline-devel ncurses-devel openssl-devel iptables \
+  &amp;&amp; yum -y install gdb \
+  &amp;&amp; yum -y install strace \
+  &amp;&amp; yum -y install net-tools
+
+# git clone --depth 1 https://github.com/SoftEtherVPN/SoftEtherVPN.git /usr/local/src/vpnserver
+
+cd /usr/local/src/vpnserver
+
+cp src/makefiles/linux_64bit.mak Makefile
+patch -p1 &lt; ../AES-256-CBC.patch
+
+# 这里强制开启-g，具体实现可以参考https://github.com/SoftEtherVPN/SoftEtherVPN.git中的linux_64bit.mak
+make DEBUG=YES
+
+cp bin/vpnserver/vpnserver /opt/vpnserver
+cp bin/vpnserver/hamcore.se2 /opt/hamcore.se2
+cp bin/vpncmd/vpncmd /opt/vpncmd
+
+# 不删除
+# rm -rf /usr/local/src/vpnserver
+
+gcc -o /usr/local/sbin/run /usr/local/src/run.c
+
+# 不删除
+# rm /usr/local/src/run.c
+
+yum -y remove readline-devel ncurses-devel openssl-devel \
+  &amp;&amp; yum -y groupremove "Development Tools" \
+  &amp;&amp; yum clean all
+
+rm -rf /var/log/* /var/cache/yum/* /var/lib/yum/*
+
+exit 0
+</pre>
+
+将Dockerfile文件修改为，
+
+<pre>
+FROM centos:centos7
+
+MAINTAINER Tomohisa Kusano &lt;siomiz@gmail.com&gt;
+
+# 下载https://github.com/SoftEtherVPN/SoftEtherVPN.git, 并且拷贝到镜像的对应目录
+COPY SoftEtherVPN /usr/local/src/vpnserver
+
+COPY copyables /
+RUN chmod +x /entrypoint.sh /gencert.sh
+
+RUN bash /build.sh \
+    &amp;&amp; rm /build.sh
+
+WORKDIR /opt
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+EXPOSE 500/udp 4500/udp 1701/udp 1194/udp 5555/tcp
+
+CMD ["/usr/local/sbin/run"]
+
+</pre>
+
+进入到对应目录，执行如下的命令，
+
+&gt; docker build -t test:test .
+
+可以得到一个带有调试信息的镜像。
+</return></return></pre>

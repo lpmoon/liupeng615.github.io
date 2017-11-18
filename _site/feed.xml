@@ -1,0 +1,2205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+	<channel>
+		<title>Xixia</title>
+		<description>Welcome to Xixia！</description>
+		<link>http://localhost:4000/jekyll-xixia</link>
+		<atom:link href="http://localhost:4000/jekyll-xixia/feed.xml" rel="self" type="application/rss+xml" />
+		
+			<item>
+				<title>Spring自定义标签</title>
+				<description>&lt;p&gt;spring可以说是目前全球使用最为广泛的java框架之一，spring提供的ioc，aop等功能大大的提高了开发的效率。spring在提高效率的同时，提供很多了扩展槽。自定义标签就是扩展槽之一，其他框架可以无缝的嵌入到spring中，方便开发者使用，比如阿里巴巴之前开源的dubbo就实现了自己的标签&lt;code class=&quot;highlighter-rouge&quot;&gt;&amp;lt;dubbo:application&amp;gt;、&amp;lt;dubbo:registry&amp;gt;、 &amp;lt;dubbo:service&amp;gt;&lt;/code&gt;等。下面我们会介绍如何在spring中使用自定义标签。首先我们先介绍下我们要实现的标签的功能:&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;用户使用标签，在spring容器启动结束后，打印出jvm和系统的一些参数。&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;h1 id=&quot;定义标签名称&quot;&gt;定义标签名称&lt;/h1&gt;
+&lt;p&gt;完事开头难，起名字尤其难，为了方便开发者使用，一个好的名字既能明确表达框架作者的意图又能方便记忆。既然是打印虚拟机相关的参数，所以我们将标签定义为&lt;code class=&quot;highlighter-rouge&quot;&gt;&amp;lt;vm&amp;gt;&lt;/code&gt;，子标签定义为&lt;code class=&quot;highlighter-rouge&quot;&gt;info&lt;/code&gt;，这样完整的标签就是&lt;code class=&quot;highlighter-rouge&quot;&gt;&amp;lt;vm:info&amp;gt;&lt;/code&gt;。之所以我们需要定义子标签，是为了后面扩容其他功能。&lt;/p&gt;
+
+&lt;h1 id=&quot;定义namespace&quot;&gt;定义Namespace&lt;/h1&gt;
+&lt;p&gt;如果你之前阅读多一些spring的源码，每一个标签对应着一个Namespace，spring会根据Namespace查找Handler进行处理。所以接下来我们需要定一个Namespace，根据spring的命名规则，我们将其定义为&lt;code class=&quot;highlighter-rouge&quot;&gt;http://www.springframework.org/schema/vm&lt;/code&gt;。&lt;/p&gt;
+
+&lt;h1 id=&quot;定义handler&quot;&gt;定义Handler&lt;/h1&gt;
+&lt;p&gt;有了Namespace后，就需要定义Handler了。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;public class VMHandler extends NamespaceHandlerSupport {
+
+    @Override
+    public void init() {
+        registerBeanDefinitionParser(&quot;info&quot;, new JavaInfoBeanDefinitionParser());
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;参照&lt;code class=&quot;highlighter-rouge&quot;&gt;&amp;lt;context&amp;gt;&lt;/code&gt;，&lt;code class=&quot;highlighter-rouge&quot;&gt;&amp;lt;vm&amp;gt;&lt;/code&gt;标签对应的Handler也继承自&lt;code class=&quot;highlighter-rouge&quot;&gt;NamespaceHandlerSupport&lt;/code&gt;，&lt;code class=&quot;highlighter-rouge&quot;&gt;NamespaceHandlerSupport&lt;/code&gt;的功能不做过多的介绍了。VMHandler的初始化函数主要负责注册子标签的Parser，在这里就是&lt;code class=&quot;highlighter-rouge&quot;&gt;info&lt;/code&gt;。&lt;/p&gt;
+
+&lt;h1 id=&quot;定义parser&quot;&gt;定义Parser&lt;/h1&gt;
+&lt;p&gt;Spring调用Handler的时候，会根据子标签的名字调用到具体的Parser，上面我们已经定义了&lt;code class=&quot;highlighter-rouge&quot;&gt;info&lt;/code&gt;对应的Parser，下面看一下其具体实现。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;public class JavaInfoBeanDefinitionParser implements BeanDefinitionParser {
+
+    @Override
+    public BeanDefinition parse(Element element, ParserContext parserContext) {
+        BeanDefinitionBuilder bdb = BeanDefinitionBuilder.genericBeanDefinition(JavaInfoTool.class);
+        bdb.setDependencyCheck(DEPENDENCY_CHECK_SIMPLE);
+        bdb.setScope(SCOPE_SINGLETON);
+
+        BeanDefinition definition = bdb.getRawBeanDefinition();
+        BeanDefinitionHolder holder = new BeanDefinitionHolder(definition, &quot;vm-java-info&quot;, null);
+        registerBeanDefinition(holder, parserContext.getRegistry());
+
+        return definition;
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Parser对应的功能比较简单，注册BeanDefinition，这个BeanDefinition对应的类是JavaInfoTool，也就是我们实现打印vm信息的类，同时给这个BeanDefinition定义一个id，id是&lt;code class=&quot;highlighter-rouge&quot;&gt;vm-java-info&lt;/code&gt;。&lt;/p&gt;
+
+&lt;h1 id=&quot;定义javainfotool&quot;&gt;定义JavaInfoTool&lt;/h1&gt;
+&lt;p&gt;为了完成在Spring容器启动后打印vm信息的功能，JavaInfoTool需要保证在最后执行，最直接的方法是继承ApplicationListener，在Spring容器状态发生变化的时候调用。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;public class JavaInfoTool implements ApplicationListener&amp;lt;ContextRefreshedEvent&amp;gt; {
+
+    public void printJavaInfo() {
+        Properties properties = System.getProperties();
+        for (Map.Entry entry : properties.entrySet()) {
+            System.out.printf(&quot;%20s -&amp;gt; %s\r\n&quot;, entry.getKey(), entry.getValue());
+        }
+    }
+
+    @Override
+    public void onApplicationEvent(ContextRefreshedEvent event) {
+        if(event.getApplicationContext().getParent() == null) {
+            printJavaInfo();
+        }
+    }
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;实现打印vm信息的代码逻辑比较简单，这里就不做过多介绍了。&lt;/p&gt;
+
+&lt;h1 id=&quot;添加配置文件&quot;&gt;添加配置文件&lt;/h1&gt;
+&lt;p&gt;到这里代码层面的工作都差不多完成了，但是还是不能直接使用。我们需要定义三个文件，&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;spring.handlers&lt;/li&gt;
+  &lt;li&gt;spring.schemas&lt;/li&gt;
+  &lt;li&gt;spring-vm-xx.xsd&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;springhandlers&quot;&gt;spring.handlers&lt;/h2&gt;
+&lt;p&gt;这个文件用于指定Namespace对应的Handler，Spring在启动过程中会扫描这个文件，加载对应关系。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;http\://www.springframework.org/schema/vm=com.lpmoon.spring.VMInfoHandler
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h2 id=&quot;springschemas&quot;&gt;spring.schemas&lt;/h2&gt;
+&lt;p&gt;这个文件用于定义对应Schema文件所在位置，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;http\://www.springframework.org/schema/vm/spring-vm-2.5.xsd=com/lpmoon/spring/spring-vm-2.5.xsd
+http\://www.springframework.org/schema/vm/spring-vm-3.0.xsd=com/lpmoon/spring/spring-vm-3.0.xsd
+http\://www.springframework.org/schema/vm/spring-vm-3.1.xsd=com/lpmoon/spring/spring-vm-3.1.xsd
+http\://www.springframework.org/schema/vm/spring-vm-3.2.xsd=com/lpmoon/spring/spring-vm-3.2.xsd
+http\://www.springframework.org/schema/vm/spring-vm-4.0.xsd=com/lpmoon/spring/spring-vm-4.0.xsd
+http\://www.springframework.org/schema/vm/spring-vm-4.1.xsd=com/lpmoon/spring/spring-vm-4.1.xsd
+http\://www.springframework.org/schema/vm/spring-vm-4.2.xsd=com/lpmoon/spring/spring-vm-4.2.xsd
+http\://www.springframework.org/schema/vm/spring-vm-4.3.xsd=com/lpmoon/spring/spring-vm-4.3.xsd
+http\://www.springframework.org/schema/vm/spring-vm.xsd=com/lpmoon/spring/spring-vm-4.3.xsd
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h2 id=&quot;spring-vm-xxxsd&quot;&gt;spring-vm-xx.xsd&lt;/h2&gt;
+&lt;p&gt;因为我们需要支持从2-x到4-x多个版本的Spring，所以我们需要根据spring.schemas重定义的schema创建多个版本的xsd文件，文件放置在&lt;code class=&quot;highlighter-rouge&quot;&gt;com/lpmoon/spring/&lt;/code&gt;目录下。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&lt;span class=&quot;cp&quot;&gt;&amp;lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&amp;gt;&lt;/span&gt;
+
+&lt;span class=&quot;nt&quot;&gt;&amp;lt;xsd:schema&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;xmlns=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;http://www.springframework.org/schema/vm&quot;&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;xmlns:xsd=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;http://www.w3.org/2001/XMLSchema&quot;&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;xmlns:tool=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;http://www.springframework.org/schema/tool&quot;&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;targetNamespace=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;http://www.springframework.org/schema/vm&quot;&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;elementFormDefault=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;qualified&quot;&lt;/span&gt;
+            &lt;span class=&quot;na&quot;&gt;attributeFormDefault=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;unqualified&quot;&lt;/span&gt;&lt;span class=&quot;nt&quot;&gt;&amp;gt;&lt;/span&gt;
+
+    &lt;span class=&quot;nt&quot;&gt;&amp;lt;xsd:annotation&amp;gt;&lt;/span&gt;
+        &lt;span class=&quot;nt&quot;&gt;&amp;lt;xsd:documentation&amp;gt;&lt;/span&gt;&lt;span class=&quot;cp&quot;&gt;&amp;lt;![CDATA[
+	Defines the vm elements for the Spring Framework's application
+	context support.
+		]]&amp;gt;&lt;/span&gt;&lt;span class=&quot;nt&quot;&gt;&amp;lt;/xsd:documentation&amp;gt;&lt;/span&gt;
+    &lt;span class=&quot;nt&quot;&gt;&amp;lt;/xsd:annotation&amp;gt;&lt;/span&gt;
+
+    &lt;span class=&quot;nt&quot;&gt;&amp;lt;xsd:element&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;name=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;info&quot;&lt;/span&gt;&lt;span class=&quot;nt&quot;&gt;&amp;gt;&lt;/span&gt;
+        &lt;span class=&quot;nt&quot;&gt;&amp;lt;xsd:annotation&amp;gt;&lt;/span&gt;
+            &lt;span class=&quot;nt&quot;&gt;&amp;lt;xsd:documentation&amp;gt;&lt;/span&gt;&lt;span class=&quot;cp&quot;&gt;&amp;lt;![CDATA[
+java info.
+			]]&amp;gt;&lt;/span&gt;&lt;span class=&quot;nt&quot;&gt;&amp;lt;/xsd:documentation&amp;gt;&lt;/span&gt;
+            &lt;span class=&quot;nt&quot;&gt;&amp;lt;xsd:appinfo&amp;gt;&lt;/span&gt;
+                &lt;span class=&quot;nt&quot;&gt;&amp;lt;tool:annotation&amp;gt;&lt;/span&gt;
+                    &lt;span class=&quot;nt&quot;&gt;&amp;lt;tool:exports&lt;/span&gt; &lt;span class=&quot;na&quot;&gt;type=&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;&quot;com.lpmoon.spring.JavaInfoTool&quot;&lt;/span&gt;&lt;span class=&quot;nt&quot;&gt;/&amp;gt;&lt;/span&gt;
+                &lt;span class=&quot;nt&quot;&gt;&amp;lt;/tool:annotation&amp;gt;&lt;/span&gt;
+            &lt;span class=&quot;nt&quot;&gt;&amp;lt;/xsd:appinfo&amp;gt;&lt;/span&gt;
+        &lt;span class=&quot;nt&quot;&gt;&amp;lt;/xsd:annotation&amp;gt;&lt;/span&gt;
+    &lt;span class=&quot;nt&quot;&gt;&amp;lt;/xsd:element&amp;gt;&lt;/span&gt;
+
+&lt;span class=&quot;nt&quot;&gt;&amp;lt;/xsd:schema&amp;gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;上面的文件定义了vm标签，以及子标签info的含义。&lt;/p&gt;
+
+&lt;h1 id=&quot;打包&quot;&gt;打包&lt;/h1&gt;
+&lt;p&gt;到这里所有的文件都已经定义好了，我们来看一看具体的文件结构，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;|____pom.xml
+|____src
+| |____main
+| | |____java
+| | | |____com
+| | | | |____lpmoon
+| | | | | |____spring
+| | | | | | |____JavaInfoBeanDefinitionParser.java
+| | | | | | |____JavaInfoTool.java
+| | | | | | |____spring-vm-2.5.xsd
+| | | | | | |____spring-vm-3.0.xsd
+| | | | | | |____spring-vm-3.1.xsd
+| | | | | | |____spring-vm-3.2.xsd
+| | | | | | |____spring-vm-4.0.xsd
+| | | | | | |____spring-vm-4.1.xsd
+| | | | | | |____spring-vm-4.2.xsd
+| | | | | | |____spring-vm-4.3.xsd
+| | | | | | |____VMHandler.java
+| | |____resources
+| | | |____META-INF
+| | | | |____spring.handlers
+| | | | |____spring.schemas
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;为了方便他人使用我们需要将我们定义的文件打包成jar文件，配置pom文件如下，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    &amp;lt;build&amp;gt;
+        &amp;lt;plugins&amp;gt;
+            &amp;lt;plugin&amp;gt;
+                &amp;lt;artifactId&amp;gt;maven-resources-plugin&amp;lt;/artifactId&amp;gt;
+                &amp;lt;version&amp;gt;2.5&amp;lt;/version&amp;gt;
+                &amp;lt;executions&amp;gt;
+                    &amp;lt;execution&amp;gt;
+                        &amp;lt;id&amp;gt;copy-xmls&amp;lt;/id&amp;gt;
+                        &amp;lt;phase&amp;gt;process-sources&amp;lt;/phase&amp;gt;
+                        &amp;lt;goals&amp;gt;
+                            &amp;lt;goal&amp;gt;copy-resources&amp;lt;/goal&amp;gt;
+                        &amp;lt;/goals&amp;gt;
+                        &amp;lt;configuration&amp;gt;
+                            &amp;lt;outputDirectory&amp;gt;${basedir}/target/classes&amp;lt;/outputDirectory&amp;gt;
+                            &amp;lt;resources&amp;gt;
+                                &amp;lt;resource&amp;gt;
+                                    &amp;lt;directory&amp;gt;${basedir}/src/main/java&amp;lt;/directory&amp;gt;
+                                    &amp;lt;includes&amp;gt;
+                                        &amp;lt;include&amp;gt;**/*.xsd&amp;lt;/include&amp;gt;
+                                    &amp;lt;/includes&amp;gt;
+                                &amp;lt;/resource&amp;gt;
+                            &amp;lt;/resources&amp;gt;
+                        &amp;lt;/configuration&amp;gt;
+                    &amp;lt;/execution&amp;gt;
+                &amp;lt;/executions&amp;gt;
+            &amp;lt;/plugin&amp;gt;
+        &amp;lt;/plugins&amp;gt;
+    &amp;lt;/build&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;上面的配置的主要作用是将xsd文件打包到对应的目录下，否则使用该jar启动的时候会报错。执行&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;mvn clean install
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;后对应的jar包里面的内容为&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;|____com
+| |____lpmoon
+| | |____spring
+| | | |____JavaInfoBeanDefinitionParser.class
+| | | |____JavaInfoTool.class
+| | | |____spring-vm-2.5.xsd
+| | | |____spring-vm-3.0.xsd
+| | | |____spring-vm-3.1.xsd
+| | | |____spring-vm-3.2.xsd
+| | | |____spring-vm-4.0.xsd
+| | | |____spring-vm-4.1.xsd
+| | | |____spring-vm-4.2.xsd
+| | | |____spring-vm-4.3.xsd
+| | | |____VMInfoHandler.class
+|____META-INF
+| |____spring.handlers
+| |____spring.schemas
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h1 id=&quot;使用&quot;&gt;使用&lt;/h1&gt;
+
+&lt;p&gt;建立项目，在对应的配置文件中添加如下配置，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&amp;lt;vm:info/&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;然后启动代码，可以看到如下输出，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;   java.runtime.name -&amp;gt; Java(TM) SE Runtime Environment
+sun.boot.library.path -&amp;gt; /Library/Java/JavaVirtualMachines/jdk1.8.0_111.jdk/Contents/Home/jre/lib
+
+......
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+</description>
+				<pubDate>Sat, 18 Nov 2017 00:00:00 +0800</pubDate>
+				<link>http://localhost:4000/jekyll-xixia/2017/11/18/spring%E8%87%AA%E5%AE%9A%E4%B9%89%E6%A0%87%E7%AD%BE.html</link>
+				<guid isPermaLink="true">http://localhost:4000/jekyll-xixia/2017/11/18/spring%E8%87%AA%E5%AE%9A%E4%B9%89%E6%A0%87%E7%AD%BE.html</guid>
+			</item>
+		
+			<item>
+				<title>Spring加载过程</title>
+				<description>&lt;p&gt;spring的启动过程在AbstractApplicationContext的refresh函数中，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	@Override
+	public void refresh() throws BeansException, IllegalStateException {
+		synchronized (this.startupShutdownMonitor) {
+			// Prepare this context for refreshing.
+			prepareRefresh();
+
+			// Tell the subclass to refresh the internal bean factory.
+			ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+
+			// Prepare the bean factory for use in this context.
+			prepareBeanFactory(beanFactory);
+
+			try {
+				// Allows post-processing of the bean factory in context subclasses.
+				postProcessBeanFactory(beanFactory);
+
+				// Invoke factory processors registered as beans in the context.
+				invokeBeanFactoryPostProcessors(beanFactory);
+
+				// Register bean processors that intercept bean creation.
+				registerBeanPostProcessors(beanFactory);
+
+				// Initialize message source for this context.
+				initMessageSource();
+
+				// Initialize event multicaster for this context.
+				initApplicationEventMulticaster();
+
+				// Initialize other special beans in specific context subclasses.
+				onRefresh();
+
+				// Check for listener beans and register them.
+				registerListeners();
+
+				// Instantiate all remaining (non-lazy-init) singletons.
+				finishBeanFactoryInitialization(beanFactory);
+
+				// Last step: publish corresponding event.
+				finishRefresh();
+			}
+
+			catch (BeansException ex) {
+            	// exception handle
+			}
+
+			finally {
+				// Reset common introspection caches in Spring's core, since we
+				// might not ever need metadata for singleton beans anymore...
+				resetCommonCaches();
+			}
+		}
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;上面的过程主要分为以下几个部分&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;初始化bean factory, 查找bean的所有定义&lt;/li&gt;
+  &lt;li&gt;配置bean factory&lt;/li&gt;
+  &lt;li&gt;初始化事件广播器&lt;/li&gt;
+  &lt;li&gt;子类初始化方法&lt;/li&gt;
+  &lt;li&gt;注册事件监听器&lt;/li&gt;
+  &lt;li&gt;根据查找到的所有定义的bean，进行初始化&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h1 id=&quot;初始化bean-factory-查找bean的所有定义&quot;&gt;初始化bean factory, 查找bean的所有定义&lt;/h1&gt;
+
+&lt;p&gt;bean的定义由obtainFreshBeanFactory()函数完成，这个函数会初始化一个bean factory，所有定义好的bean会存储在bean factory的一个map中。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;obtainFreshBeanFactory -&amp;gt; refreshBeanFactory
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	@Override
+	protected final void refreshBeanFactory() throws BeansException {
+		if (hasBeanFactory()) {
+			destroyBeans();
+			closeBeanFactory();
+		}
+		try {
+			DefaultListableBeanFactory beanFactory = createBeanFactory();
+			beanFactory.setSerializationId(getId());
+			customizeBeanFactory(beanFactory);
+			loadBeanDefinitions(beanFactory);
+			synchronized (this.beanFactoryMonitor) {
+				this.beanFactory = beanFactory;
+			}
+		}
+		catch (IOException ex) {
+			throw new ApplicationContextException(&quot;I/O error parsing bean definition source for &quot; + getDisplayName(), ex);
+		}
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;refresh函数中完成bean factory的定义以及初始化，同时查找所有bean的定义。需要注意的是customizeBeanFactory会对bean factory进行一些配置，主要包括下面的两个属性&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;是否允许bean覆盖 -&amp;gt;  allowBeanDefinitionOverriding&lt;/li&gt;
+  &lt;li&gt;是否允许循环引用 -&amp;gt; allowCircularReferences&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;这里需要大致介绍下这两个属性，allowBeanDefinitionOverriding表示是否允许定义重名的bean，如果不允许则会抛出异常，否则会进行覆盖。allowCircularReferences表示是否允许循环依赖，所谓的循环依赖是指两个bean互相依赖，bean A是bean B的一个属性同时bean B也是bean A的一个属性，这样初始化bean A就需要先完成bean B的初始化，初始化bean B又需要bean A的初始化，这就产生了循环依赖的情况，下面会提到spring是如何完成循环依赖的注入的。需要注意的是allowBeanDefinitionOverriding用于bean定义阶段，而allowCircularReferences用于初始化阶段。&lt;/p&gt;
+
+&lt;p&gt;在配置完bean factory后就进入到正是的查找bean定义阶段了，完成这项工作的是loadBeanDefinitions。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	@Override
+	protected void loadBeanDefinitions(DefaultListableBeanFactory beanFactory) throws BeansException, IOException {
+		// Create a new XmlBeanDefinitionReader for the given BeanFactory.
+		XmlBeanDefinitionReader beanDefinitionReader = new XmlBeanDefinitionReader(beanFactory);
+
+		// Configure the bean definition reader with this context's
+		// resource loading environment.
+		beanDefinitionReader.setEnvironment(this.getEnvironment());
+		beanDefinitionReader.setResourceLoader(this);
+		beanDefinitionReader.setEntityResolver(new ResourceEntityResolver(this));
+
+		// Allow a subclass to provide custom initialization of the reader,
+		// then proceed with actually loading the bean definitions.
+		initBeanDefinitionReader(beanDefinitionReader);
+		loadBeanDefinitions(beanDefinitionReader);
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;由于我们需要加载的bean一部分定义在xml中，所以我们需要读取xml文件，在spring中这个功能由XmlBeanDefinitionReader完成。定义好xml的reader后，继续调用重载函数loadBeanDefinitions进行加载，不同的是此时参数已经变成了刚才定义的reader。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	protected void loadBeanDefinitions(XmlBeanDefinitionReader reader) throws BeansException, IOException {
+		Resource[] configResources = getConfigResources();
+		if (configResources != null) {
+			reader.loadBeanDefinitions(configResources);
+		}
+		String[] configLocations = getConfigLocations();
+		if (configLocations != null) {
+			reader.loadBeanDefinitions(configLocations);
+		}
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;loadBeanDefinitions会针对每一个xml资源调用一次reader的loadBeanDefinitions函数进行加载，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	@Override
+	public int loadBeanDefinitions(String... locations) throws BeanDefinitionStoreException {
+		Assert.notNull(locations, &quot;Location array must not be null&quot;);
+		int counter = 0;
+		for (String location : locations) {
+			counter += loadBeanDefinitions(location);
+		}
+		return counter;
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;经过资源查找一系列操作后最终会进入到下面的方法中，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	public int loadBeanDefinitions(EncodedResource encodedResource) throws BeanDefinitionStoreException {
+		Set&amp;lt;EncodedResource&amp;gt; currentResources = this.resourcesCurrentlyBeingLoaded.get();
+		if (currentResources == null) {
+			currentResources = new HashSet&amp;lt;EncodedResource&amp;gt;(4);
+			this.resourcesCurrentlyBeingLoaded.set(currentResources);
+		}
+		if (!currentResources.add(encodedResource)) {
+			throw new BeanDefinitionStoreException(
+					&quot;Detected cyclic loading of &quot; + encodedResource + &quot; - check your import definitions!&quot;);
+		}
+		try {
+			InputStream inputStream = encodedResource.getResource().getInputStream();
+			try {
+				InputSource inputSource = new InputSource(inputStream);
+				if (encodedResource.getEncoding() != null) {
+					inputSource.setEncoding(encodedResource.getEncoding());
+				}
+				return doLoadBeanDefinitions(inputSource, encodedResource.getResource());
+			}
+			finally {
+				inputStream.close();
+			}
+		}
+		catch (IOException ex) {
+			throw new BeanDefinitionStoreException(
+					&quot;IOException parsing XML document from &quot; + encodedResource.getResource(), ex);
+		}
+		finally {
+			currentResources.remove(encodedResource);
+			if (currentResources.isEmpty()) {
+				this.resourcesCurrentlyBeingLoaded.remove();
+			}
+		}
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;上面的代码比较长大致可以分为三个阶段&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;记录当前正在处理的resource，如果当前resource已经在处理中则会抛出异常&lt;/li&gt;
+  &lt;li&gt;获取文件的流&lt;/li&gt;
+  &lt;li&gt;读取流并且进行bean加载&lt;/li&gt;
+  &lt;li&gt;加载成功后从正在处理的resource集合中移除当前resource&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	protected int doLoadBeanDefinitions(InputSource inputSource, Resource resource)
+			throws BeanDefinitionStoreException {
+		try {
+			Document doc = doLoadDocument(inputSource, resource);
+			return registerBeanDefinitions(doc, resource);
+		}
+		catch (Exception ex) {
+			// handle exception
+		}
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;继续沿着上面的代码往下跟踪会进入到parseBeanDefinitions(Element root, …)中，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	protected void parseBeanDefinitions(Element root, BeanDefinitionParserDelegate delegate) {
+		if (delegate.isDefaultNamespace(root)) {
+			NodeList nl = root.getChildNodes();
+			for (int i = 0; i &amp;lt; nl.getLength(); i++) {
+				Node node = nl.item(i);
+				if (node instanceof Element) {
+					Element ele = (Element) node;
+					if (delegate.isDefaultNamespace(ele)) {
+						parseDefaultElement(ele, delegate);
+					}
+					else {
+						delegate.parseCustomElement(ele);
+					}
+				}
+			}
+		}
+		else {
+			delegate.parseCustomElement(root);
+		}
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;上面的代码扫描root节点的每个子节点，然后判断子节点是否是Element，如果不是则继续下一个子节点，如果是则判断是否是默认的namespace，如果是则调用parseDefaultElement处理，否则调用delegate的parseCustomElement进行处理。这里需要说明一下默认的namespace是指 &lt;strong&gt;http://www.springframework.org/schema/beans&lt;/strong&gt; ，如果我们在xml中设置了下面的配置&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&amp;lt;context:annotation-config /&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;那么这个配置对应的namespace则是 &lt;strong&gt;http://www.springframework.org/schema/context&lt;/strong&gt; ，与默认的就不相同了。&lt;/p&gt;
+
+&lt;h3 id=&quot;默认的namespace&quot;&gt;默认的namespace&lt;/h3&gt;
+&lt;p&gt;首先我们先看一下默认的namespace会进行什么处理，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;
+	private void parseDefaultElement(Element ele, BeanDefinitionParserDelegate delegate) {
+		if (delegate.nodeNameEquals(ele, IMPORT_ELEMENT)) {
+			importBeanDefinitionResource(ele);
+		}
+		else if (delegate.nodeNameEquals(ele, ALIAS_ELEMENT)) {
+			processAliasRegistration(ele);
+		}
+		else if (delegate.nodeNameEquals(ele, BEAN_ELEMENT)) {
+			processBeanDefinition(ele, delegate);
+		}
+		else if (delegate.nodeNameEquals(ele, NESTED_BEANS_ELEMENT)) {
+			// recurse
+			doRegisterBeanDefinitions(ele);
+		}
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;从代码我们可以推断出有四个element属于默认的namespace，分别是&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;import -&amp;gt; 引入其他配置文件&lt;/li&gt;
+  &lt;li&gt;alias -&amp;gt; 给某个bean起一个别名&lt;/li&gt;
+  &lt;li&gt;bean -&amp;gt; bean定义&lt;/li&gt;
+  &lt;li&gt;beans -&amp;gt; 内嵌的beans&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;如果是import类型的，则会解析import中定义的配置路径，然后根据解析出的路径进行bean definition。如果是alias，则记录alias到原始名称的映射关系，这个映射关系存储在map表中。如果是bean类型的则调用processBeanDefinition处理。如果是beans的，则调用doRegisterBeanDefinitions进行递归处理。&lt;/p&gt;
+
+&lt;p&gt;在这里我们重点关注下element为bean类型的，因为上面的其他三种类型最终都会转化为bean类型。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	/**
+	 * Process the given bean element, parsing the bean definition
+	 * and registering it with the registry.
+	 */
+	protected void processBeanDefinition(Element ele, BeanDefinitionParserDelegate delegate) {
+		BeanDefinitionHolder bdHolder = delegate.parseBeanDefinitionElement(ele);
+		if (bdHolder != null) {
+			bdHolder = delegate.decorateBeanDefinitionIfRequired(ele, bdHolder);
+			try {
+				// Register the final decorated instance.
+				BeanDefinitionReaderUtils.registerBeanDefinition(bdHolder, getReaderContext().getRegistry());
+			}
+			catch (BeanDefinitionStoreException ex) {
+				getReaderContext().error(&quot;Failed to register bean definition with name '&quot; +
+						bdHolder.getBeanName() + &quot;'&quot;, ele, ex);
+			}
+			// Send registration event.
+			getReaderContext().fireComponentRegistered(new BeanComponentDefinition(bdHolder));
+		}
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;上面的代码不是很复杂，主要是解析element里面的各个元素包括name, class, init-method, alias等等，然后将其封装到BeanDefinitionHolder中，然后将其注册到bean factory中。如果bean设置了alias则需要将alias到原始名称的映射记录下来，这个操作和上面的alias类型一致。bean的注册调用的是registerBeanDefinition方法，这里面会用到我们之前提过的allowBeanDefinitionOverriding属性判断当前bean是否应该被注册，具体代码可以参照下面&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;		BeanDefinition oldBeanDefinition;
+
+		oldBeanDefinition = this.beanDefinitionMap.get(beanName);
+		if (oldBeanDefinition != null) {
+			if (!isAllowBeanDefinitionOverriding()) {
+				throw new BeanDefinitionStoreException(beanDefinition.getResourceDescription(), beanName,
+						&quot;Cannot register bean definition [&quot; + beanDefinition + &quot;] for bean '&quot; + beanName +
+						&quot;': There is already [&quot; + oldBeanDefinition + &quot;] bound.&quot;);
+			}
+			else if (oldBeanDefinition.getRole() &amp;lt; beanDefinition.getRole()) {
+				// e.g. was ROLE_APPLICATION, now overriding with ROLE_SUPPORT or ROLE_INFRASTRUCTURE
+				if (this.logger.isWarnEnabled()) {
+					this.logger.warn(&quot;Overriding user-defined bean definition for bean '&quot; + beanName +
+							&quot;' with a framework-generated bean definition: replacing [&quot; +
+							oldBeanDefinition + &quot;] with [&quot; + beanDefinition + &quot;]&quot;);
+				}
+			}
+			else if (!beanDefinition.equals(oldBeanDefinition)) {
+				if (this.logger.isInfoEnabled()) {
+					this.logger.info(&quot;Overriding bean definition for bean '&quot; + beanName +
+							&quot;' with a different definition: replacing [&quot; + oldBeanDefinition +
+							&quot;] with [&quot; + beanDefinition + &quot;]&quot;);
+				}
+			}
+			else {
+				if (this.logger.isDebugEnabled()) {
+					this.logger.debug(&quot;Overriding bean definition for bean '&quot; + beanName +
+							&quot;' with an equivalent definition: replacing [&quot; + oldBeanDefinition +
+							&quot;] with [&quot; + beanDefinition + &quot;]&quot;);
+				}
+			}
+			this.beanDefinitionMap.put(beanName, beanDefinition);
+		}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;方法首先会从beanDefinitionMap中获取beanDefinition，如果没有则进行注册，如果有了则判断是否允许覆盖，这里就是通过allowBeanDefinitionOverriding参数完成的。如果不允许覆盖，则会直接抛出异常。&lt;/p&gt;
+
+&lt;h3 id=&quot;自定义namespace&quot;&gt;自定义namespace&lt;/h3&gt;
+&lt;p&gt;上面描述了默认namespace的处理过程，下面会对自定义namespace的解析过程做一个大致的描述。为了更好的说明，我们以&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&amp;lt;context:annotation-config /&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;为例。&lt;/p&gt;
+
+&lt;p&gt;首先会调用BeanDefinitionParserDelegate的parseCustomElement进行处理，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	public BeanDefinition parseCustomElement(Element ele) {
+		return parseCustomElement(ele, null);
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;接下来处理会交给parseCustomElement方法，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	public BeanDefinition parseCustomElement(Element ele, BeanDefinition containingBd) {
+		String namespaceUri = getNamespaceURI(ele);
+		NamespaceHandler handler = this.readerContext.getNamespaceHandlerResolver().resolve(namespaceUri);
+		if (handler == null) {
+			error(&quot;Unable to locate Spring NamespaceHandler for XML schema namespace [&quot; + namespaceUri + &quot;]&quot;, ele);
+			return null;
+		}
+		return handler.parse(ele, new ParserContext(this.readerContext, this, containingBd));
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;上面的代码首先获取element对应的namespace，然后获取对应的handler。所有handler的定义来自META-INF/spring.handlers文件，spring解析类路径下的所有spring.handlers文件，然后将其合并问一个map，map的key为namespace，value是对应的handler的类名称。解析完所有的spring.handlers文件后，spring遍历map，通过类加载器加载所有handler类，并且进行初始化，放到handlerMappings（一个map）中，对应的key是namespace，value是handler实例。
+因为我们以context标签为例，所以这里获取的handler就是ContextNamespaceHandler。获取到handler后，进入到parse阶段，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	@Override
+	public BeanDefinition parse(Element element, ParserContext parserContext) {
+		return findParserForElement(element, parserContext).parse(element, parserContext);
+	}
+    
+    /**
+	 * Locates the {@link BeanDefinitionParser} from the register implementations using
+	 * the local name of the supplied {@link Element}.
+	 */
+	private BeanDefinitionParser findParserForElement(Element element, ParserContext parserContext) {
+		String localName = parserContext.getDelegate().getLocalName(element);
+		BeanDefinitionParser parser = this.parsers.get(localName);
+		if (parser == null) {
+			parserContext.getReaderContext().fatal(
+					&quot;Cannot locate BeanDefinitionParser for element [&quot; + localName + &quot;]&quot;, element);
+		}
+		return parser;
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;从parse函数可以看出，ContextNamespaceHandler不是最终的处理类，它还会根据local name也就是上面标签中的annotation-config查找对应的parser，具体到这个例子对应的parser是AnnocationConfigBeanDefinitionParser，这个parser是在ContextNamespaceHandler初始化的时候注册到handler中的&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;public class ContextNamespaceHandler extends NamespaceHandlerSupport {
+
+	@Override
+	public void init() {
+		registerBeanDefinitionParser(&quot;property-placeholder&quot;, new PropertyPlaceholderBeanDefinitionParser());
+		registerBeanDefinitionParser(&quot;property-override&quot;, new PropertyOverrideBeanDefinitionParser());
+        // 这里就是上面提到的parser
+		registerBeanDefinitionParser(&quot;annotation-config&quot;, new AnnotationConfigBeanDefinitionParser());
+		registerBeanDefinitionParser(&quot;component-scan&quot;, new ComponentScanBeanDefinitionParser());
+		registerBeanDefinitionParser(&quot;load-time-weaver&quot;, new LoadTimeWeaverBeanDefinitionParser());
+		registerBeanDefinitionParser(&quot;spring-configured&quot;, new SpringConfiguredBeanDefinitionParser());
+		registerBeanDefinitionParser(&quot;mbean-export&quot;, new MBeanExportBeanDefinitionParser());
+		registerBeanDefinitionParser(&quot;mbean-server&quot;, new MBeanServerBeanDefinitionParser());
+	}
+
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;AnnotationConfigBeanDefinitionParser将Annotation相关的一些Processor注册到bean factory中，包括&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;ConfigurationClassPostProcessor&lt;/li&gt;
+  &lt;li&gt;AutowiredAnnotationBeanPostProcessor&lt;/li&gt;
+  &lt;li&gt;RequiredAnnotationBeanPostProcessor&lt;/li&gt;
+  &lt;li&gt;CommonAnnotationBeanPostProcessor
+等，这些都是用来处理在spring中出现的注解的。&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;&lt;strong&gt;&lt;font color=&quot;red&quot; size=&quot;5&quot;&gt;到这为止，bean的定义阶段就完成了，下面进入bean factory的配置阶段&lt;/font&gt;&lt;/strong&gt;&lt;/p&gt;
+
+&lt;h1 id=&quot;配置bean-factory&quot;&gt;配置bean factory&lt;/h1&gt;
+
+&lt;p&gt;bean factory的配置阶段分为多步，&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;准备阶段&lt;/li&gt;
+  &lt;li&gt;后处理阶段，目前什么都没做&lt;/li&gt;
+  &lt;li&gt;调用ApplicationContext中设置的BeanFactoryPostProcessor和bean factory加载的所有BeanFactoryPostProcessor处理bean factory&lt;/li&gt;
+  &lt;li&gt;查找bean factory加载的所有BeanPostProcessor，然后设置到bean factory的beanPostProcessors中
+    &lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;         // Prepare the bean factory for use in this context.
+         prepareBeanFactory(beanFactory);
+
+         try {
+             // Allows post-processing of the bean factory in context subclasses.
+             postProcessBeanFactory(beanFactory);
+
+             // Invoke factory processors registered as beans in the context.
+             invokeBeanFactoryPostProcessors(beanFactory);
+
+             // Register bean processors that intercept bean creation.
+             registerBeanPostProcessors(beanFactory);
+                
+             ...
+                
+         } catch() ...
+&lt;/code&gt;&lt;/pre&gt;
+    &lt;/div&gt;
+    &lt;p&gt;第四步提到的所有beanPostProcessors在bean初始化之后会依次进行调用。&lt;/p&gt;
+  &lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h1 id=&quot;初始化事件广播器&quot;&gt;初始化事件广播器&lt;/h1&gt;
+&lt;p&gt;事件广播器用于广播消息，所有的消息会被后面注册的监听器所处理&lt;/p&gt;
+
+&lt;h1 id=&quot;子类初始化方法&quot;&gt;子类初始化方法&lt;/h1&gt;
+&lt;p&gt;该步骤需要AbstractApplicationContext的子类覆写onRefresh方法&lt;/p&gt;
+
+&lt;h1 id=&quot;注册事件监听器&quot;&gt;注册事件监听器&lt;/h1&gt;
+&lt;p&gt;该步骤注册的所有监听器会接收到消息广播器推送的消息，并且进行处理&lt;/p&gt;
+
+&lt;h1 id=&quot;根据查找到的所有定义的bean进行初始化&quot;&gt;根据查找到的所有定义的bean，进行初始化&lt;/h1&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	protected void finishBeanFactoryInitialization(ConfigurableListableBeanFactory beanFactory) {
+		// Initialize conversion service for this context.
+		if (beanFactory.containsBean(CONVERSION_SERVICE_BEAN_NAME) &amp;amp;&amp;amp;
+				beanFactory.isTypeMatch(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class)) {
+			beanFactory.setConversionService(
+					beanFactory.getBean(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class));
+		}
+
+		// Register a default embedded value resolver if no bean post-processor
+		// (such as a PropertyPlaceholderConfigurer bean) registered any before:
+		// at this point, primarily for resolution in annotation attribute values.
+		if (!beanFactory.hasEmbeddedValueResolver()) {
+			beanFactory.addEmbeddedValueResolver(new StringValueResolver() {
+				@Override
+				public String resolveStringValue(String strVal) {
+					return getEnvironment().resolvePlaceholders(strVal);
+				}
+			});
+		}
+
+		// Initialize LoadTimeWeaverAware beans early to allow for registering their transformers early.
+		String[] weaverAwareNames = beanFactory.getBeanNamesForType(LoadTimeWeaverAware.class, false, false);
+		for (String weaverAwareName : weaverAwareNames) {
+			getBean(weaverAwareName);
+		}
+
+		// Stop using the temporary ClassLoader for type matching.
+		beanFactory.setTempClassLoader(null);
+
+		// Allow for caching all bean definition metadata, not expecting further changes.
+		beanFactory.freezeConfiguration();
+
+		// Instantiate all remaining (non-lazy-init) singletons.
+		beanFactory.preInstantiateSingletons();
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;设置Conversation Service&lt;/li&gt;
+  &lt;li&gt;如果没有设置StringValueResolver，则设置默认的StringValueResolver。StringValueResolver用于解析bean初始化时传入的字符串，这里的字符串包括一些模板类型的通配符，例如${xxx}&lt;/li&gt;
+  &lt;li&gt;加载bean&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;第三步的加载bean是通过bean factory的preInstantiateSingletons来完成的，该函数遍历bean factory中所有的bean definition，如果bean不是抽象的，是单例的，并且不是延迟加载的，则进行初始化。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;		// Trigger initialization of all non-lazy singleton beans...
+		for (String beanName : beanNames) {
+			RootBeanDefinition bd = getMergedLocalBeanDefinition(beanName);
+			if (!bd.isAbstract() &amp;amp;&amp;amp; bd.isSingleton() &amp;amp;&amp;amp; !bd.isLazyInit()) {
+				if (isFactoryBean(beanName)) {
+					final FactoryBean&amp;lt;?&amp;gt; factory = (FactoryBean&amp;lt;?&amp;gt;) getBean(FACTORY_BEAN_PREFIX + beanName);
+					boolean isEagerInit;
+					if (System.getSecurityManager() != null &amp;amp;&amp;amp; factory instanceof SmartFactoryBean) {
+						isEagerInit = AccessController.doPrivileged(new PrivilegedAction&amp;lt;Boolean&amp;gt;() {
+							@Override
+							public Boolean run() {
+								return ((SmartFactoryBean&amp;lt;?&amp;gt;) factory).isEagerInit();
+							}
+						}, getAccessControlContext());
+					}
+					else {
+						isEagerInit = (factory instanceof SmartFactoryBean &amp;amp;&amp;amp;
+								((SmartFactoryBean&amp;lt;?&amp;gt;) factory).isEagerInit());
+					}
+					if (isEagerInit) {
+						getBean(beanName);
+					}
+				}
+				else {
+					getBean(beanName);
+				}
+			}
+		}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;初始化由getBean方法完成，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	@Override
+	public Object getBean(String name) throws BeansException {
+		return doGetBean(name, null, null, false);
+	}  
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;doGetBean代码比较长，提炼一下核心的代码如下所示，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;				// Create bean instance.
+				if (mbd.isSingleton()) {
+					sharedInstance = getSingleton(beanName, new ObjectFactory&amp;lt;Object&amp;gt;() {
+						@Override
+						public Object getObject() throws BeansException {
+							try {
+								return createBean(beanName, mbd, args);
+							}
+							catch (BeansException ex) {
+								// Explicitly remove instance from singleton cache: It might have been put there
+								// eagerly by the creation process, to allow for circular reference resolution.
+								// Also remove any beans that received a temporary reference to the bean.
+								destroySingleton(beanName);
+								throw ex;
+							}
+						}
+					});
+					bean = getObjectForBeanInstance(sharedInstance, name, beanName, mbd);
+				}
+
+				else if (mbd.isPrototype()) {
+					// It's a prototype -&amp;gt; create a new instance.
+					Object prototypeInstance = null;
+					try {
+						beforePrototypeCreation(beanName);
+						prototypeInstance = createBean(beanName, mbd, args);
+					}
+					finally {
+						afterPrototypeCreation(beanName);
+					}
+					bean = getObjectForBeanInstance(prototypeInstance, name, beanName, mbd);
+				}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;doGetBean对单例和多例的处理是不一样的，这里以单例为例。bean的创建最终交给了ObjectFactory的getObject方法，getObject调用createBean，createBean调用doCreateBean，doCreateBean先创建bean&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;		final Object bean = (instanceWrapper != null ? instanceWrapper.getWrappedInstance() : null);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;然后调用populateBean初始化bean，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	/**
+	 * Populate the bean instance in the given BeanWrapper with the property values
+	 * from the bean definition.
+	 * @param beanName the name of the bean
+	 * @param mbd the bean definition for the bean
+	 * @param bw BeanWrapper with bean instance
+	 */
+	protected void populateBean(String beanName, RootBeanDefinition mbd, BeanWrapper bw) {
+		PropertyValues pvs = mbd.getPropertyValues();
+
+		if (bw == null) {
+			if (!pvs.isEmpty()) {
+				throw new BeanCreationException(
+						mbd.getResourceDescription(), beanName, &quot;Cannot apply property values to null instance&quot;);
+			}
+			else {
+				// Skip property population phase for null instance.
+				return;
+			}
+		}
+
+		// Give any InstantiationAwareBeanPostProcessors the opportunity to modify the
+		// state of the bean before properties are set. This can be used, for example,
+		// to support styles of field injection.
+		boolean continueWithPropertyPopulation = true;
+
+		if (!mbd.isSynthetic() &amp;amp;&amp;amp; hasInstantiationAwareBeanPostProcessors()) {
+			for (BeanPostProcessor bp : getBeanPostProcessors()) {
+				if (bp instanceof InstantiationAwareBeanPostProcessor) {
+					InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+					if (!ibp.postProcessAfterInstantiation(bw.getWrappedInstance(), beanName)) {
+						continueWithPropertyPopulation = false;
+						break;
+					}
+				}
+			}
+		}
+
+		if (!continueWithPropertyPopulation) {
+			return;
+		}
+
+		if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME ||
+				mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+			MutablePropertyValues newPvs = new MutablePropertyValues(pvs);
+
+			// Add property values based on autowire by name if applicable.
+			if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME) {
+				autowireByName(beanName, mbd, bw, newPvs);
+			}
+
+			// Add property values based on autowire by type if applicable.
+			if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+				autowireByType(beanName, mbd, bw, newPvs);
+			}
+
+			pvs = newPvs;
+		}
+
+		boolean hasInstAwareBpps = hasInstantiationAwareBeanPostProcessors();
+		boolean needsDepCheck = (mbd.getDependencyCheck() != RootBeanDefinition.DEPENDENCY_CHECK_NONE);
+
+		if (hasInstAwareBpps || needsDepCheck) {
+			PropertyDescriptor[] filteredPds = filterPropertyDescriptorsForDependencyCheck(bw, mbd.allowCaching);
+			if (hasInstAwareBpps) {
+				for (BeanPostProcessor bp : getBeanPostProcessors()) {
+					if (bp instanceof InstantiationAwareBeanPostProcessor) {
+						InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+						pvs = ibp.postProcessPropertyValues(pvs, filteredPds, bw.getWrappedInstance(), beanName);
+						if (pvs == null) {
+							return;
+						}
+					}
+				}
+			}
+			if (needsDepCheck) {
+				checkDependencies(beanName, mbd, filteredPds, pvs);
+			}
+		}
+
+		applyPropertyValues(beanName, mbd, bw, pvs);
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;先获取该bean配置的所有property。依次调用bean factory中各个post processor的postProcessAfterInstantiation方法，然后依次调用bean factory中各个post processor的postProcessPropertyValues方法。如果我们设置了 &lt;strong&gt;&lt;context:annotation-config&gt;&lt;/context:annotation-config&gt;&lt;/strong&gt; ，则会在当前bean对应的类中查找带有 &lt;strong&gt;@Autowired&lt;/strong&gt; 注解的field， 然后加载field对应的bean，然后进行注入操作。&lt;/p&gt;
+
+&lt;p&gt;然后调用applyPropertyValues加载各个property对应的bean，同时注入到当前bean中，核心代码如下所示，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;		for (PropertyValue pv : original) {
+			if (pv.isConverted()) {
+				deepCopy.add(pv);
+			}
+			else {
+				String propertyName = pv.getName();
+				Object originalValue = pv.getValue();
+                // 1
+				Object resolvedValue = valueResolver.resolveValueIfNecessary(pv, originalValue);
+				Object convertedValue = resolvedValue;
+				boolean convertible = bw.isWritableProperty(propertyName) &amp;amp;&amp;amp;
+						!PropertyAccessorUtils.isNestedOrIndexedProperty(propertyName);
+				if (convertible) {
+					convertedValue = convertForProperty(resolvedValue, propertyName, bw, converter);
+				}
+				// Possibly store converted value in merged bean definition,
+				// in order to avoid re-conversion for every created bean instance.
+				if (resolvedValue == originalValue) {
+					if (convertible) {
+						pv.setConvertedValue(convertedValue);
+					}
+					deepCopy.add(pv);
+				}
+				else if (convertible &amp;amp;&amp;amp; originalValue instanceof TypedStringValue &amp;amp;&amp;amp;
+						!((TypedStringValue) originalValue).isDynamic() &amp;amp;&amp;amp;
+						!(convertedValue instanceof Collection || ObjectUtils.isArray(convertedValue))) {
+					pv.setConvertedValue(convertedValue);
+					deepCopy.add(pv);
+				}
+				else {
+					resolveNecessary = true;
+					deepCopy.add(new PropertyValue(pv, convertedValue));
+				}
+			}
+		}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;上面的代码1处获取到field的名称和值后，调用valueResolver的resolveValueIfNecessary获取需要注入到field的实际值。resolveValueIfNecessary根据value的不同类型，调用不同的解析函数，如果是自定义的类，则调用resolveReference。resolveReference内部则调用beanFactory的getBean方法递归加载当前bean所依赖的bean。&lt;/p&gt;
+
+&lt;p&gt;populateBean设置完依赖之后，则调用initializeBean继续完成bean的初始化操作，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;	protected Object initializeBean(final String beanName, final Object bean, RootBeanDefinition mbd) {
+		if (System.getSecurityManager() != null) {
+			AccessController.doPrivileged(new PrivilegedAction&amp;lt;Object&amp;gt;() {
+				@Override
+				public Object run() {
+					invokeAwareMethods(beanName, bean);
+					return null;
+				}
+			}, getAccessControlContext());
+		}
+		else {
+			invokeAwareMethods(beanName, bean);
+		}
+
+		Object wrappedBean = bean;
+		if (mbd == null || !mbd.isSynthetic()) {
+            // 1
+			wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
+		}
+
+		try {
+            // 2
+			invokeInitMethods(beanName, wrappedBean, mbd);
+		}
+		catch (Throwable ex) {
+			throw new BeanCreationException(
+					(mbd != null ? mbd.getResourceDescription() : null),
+					beanName, &quot;Invocation of init method failed&quot;, ex);
+		}
+
+		if (mbd == null || !mbd.isSynthetic()) {
+			wrappedBean = applyBeanPostProcessorsAfterInitialization(wrappedBean, beanName);
+		}
+		return wrappedBean;
+	}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;上面的代码主要完成两件事情，&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;调用bean factory中定义的post processor初始化当前bean。如果我们在当前bean对应的类中使用了 &lt;strong&gt;@PostConstruct&lt;/strong&gt; 注解符，同时设置了 &lt;strong&gt;&lt;context:annotation-config&gt;&lt;/context:annotation-config&gt;&lt;/strong&gt; ，则会调用注解符所在的函数进行初始化。对应上面的代码1&lt;/li&gt;
+  &lt;li&gt;如果bean对应的类实现了InitializingBean接口，则调用afterPropertiesSet方法。如果bean在定义的时候指定了init-method，则调用init-method。对应上面的代码2&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;&lt;strong&gt;&lt;font color=&quot;red&quot; size=&quot;5&quot;&gt;至此spring的加载过程就完成了。&lt;/font&gt;&lt;/strong&gt;&lt;/p&gt;
+
+</description>
+				<pubDate>Fri, 13 Oct 2017 00:00:00 +0800</pubDate>
+				<link>http://localhost:4000/jekyll-xixia/2017/10/13/spring%E5%8A%A0%E8%BD%BD%E8%BF%87%E7%A8%8B.html</link>
+				<guid isPermaLink="true">http://localhost:4000/jekyll-xixia/2017/10/13/spring%E5%8A%A0%E8%BD%BD%E8%BF%87%E7%A8%8B.html</guid>
+			</item>
+		
+			<item>
+				<title>Read Me</title>
+				<description>&lt;h1 id=&quot;jekyll-xixia&quot;&gt;Jekyll Xixia&lt;/h1&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;Get it from &lt;a href=&quot;https://github.com/zxixia/jekyll-xixia&quot;&gt;github&lt;/a&gt;.&lt;/li&gt;
+  &lt;li&gt;See the &lt;a href=&quot;http://xixia.info/jekyll-xixia/&quot;&gt;live demo&lt;/a&gt;.&lt;/li&gt;
+  &lt;li&gt;See it &lt;a href=&quot;http://xixia.info/&quot;&gt;in action on my own blog&lt;/a&gt;.&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;p&gt;A simple and clean Jekyll theme using &lt;a href=&quot;http://getbootstrap.com&quot;&gt;bootstrap&lt;/a&gt;
+(not to be confused with jekyll-bootstrap) that’s easy to modify and very
+modular in component and element reuse.&lt;/p&gt;
+
+&lt;p&gt;The theme works well on mobile phones, using a collapsable nav bar and hiding the
+sidebar. The links pane in the sidebar is available on mobile through the nav menu,
+and you can do the same thing for any other sections added to the sidebar.&lt;/p&gt;
+
+&lt;p&gt;Don’t forget to occassionally merge against my upstream repository so you can get
+the latest changes. Pull requests are encouraged and accepted!&lt;/p&gt;
+
+&lt;h1 id=&quot;preview&quot;&gt;Preview&lt;/h1&gt;
+&lt;p&gt;&lt;img src=&quot;/jekyll-xixia//assets/images/preview.png&quot; alt=&quot;Xixia&quot; /&gt;&lt;/p&gt;
+
+&lt;h1 id=&quot;license&quot;&gt;License&lt;/h1&gt;
+
+&lt;p&gt;The content of this theme is distributed and licensed under a
+&lt;img src=&quot;/jekyll-xixia/assets/images/cc_by_88x31.png&quot; alt=&quot;License Badge&quot; /&gt;
+&lt;a href=&quot;https://creativecommons.org/licenses/by/4.0/legalcode&quot;&gt;Creative Commons Attribution 4.0 License&lt;/a&gt;&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;This license lets others distribute, remix, tweak, and build upon your work,
+even commercially, as long as they credit you for the original creation. This
+is the most accommodating of licenses offered. Recommended for maximum
+dissemination and use of licensed materials.
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;In other words: you can do anything you want with this theme on any site, just please
+provide a link to &lt;a href=&quot;https://github.com/zxixia/jekyll-xixia&quot;&gt;the original theme on github&lt;/a&gt;
+so I get credit for the original design. Beyond that, have at it!&lt;/p&gt;
+
+&lt;h1 id=&quot;thanks&quot;&gt;Thanks&lt;/h1&gt;
+
+&lt;p&gt;1，&lt;a href=&quot;http://jekyllrb.com/&quot;&gt;Jekyll&lt;/a&gt;&lt;/p&gt;
+
+&lt;p&gt;2，&lt;a href=&quot;http://getbootstrap.com/&quot;&gt;Bootstrap&lt;/a&gt;&lt;/p&gt;
+
+&lt;p&gt;3，&lt;a href=&quot;https://github.com/&quot;&gt;Github&lt;/a&gt;&lt;/p&gt;
+
+&lt;p&gt;4，&lt;a href=&quot;https://github.com/scotte/jekyll-clean&quot;&gt;Jekyll Clean Theme&lt;/a&gt;&lt;/p&gt;
+
+</description>
+				<pubDate>Tue, 19 Sep 2017 00:00:00 +0800</pubDate>
+				<link>http://localhost:4000/jekyll-xixia/other/2017/09/19/README.html</link>
+				<guid isPermaLink="true">http://localhost:4000/jekyll-xixia/other/2017/09/19/README.html</guid>
+			</item>
+		
+			<item>
+				<title>How to get beautiful ASCII pics and ASCII text</title>
+				<description>&lt;h3 id=&quot;1ascii-generator&quot;&gt;1，ASCII Generator&lt;/h3&gt;
+
+&lt;p&gt;In &lt;a href=&quot;http://www.network-science.de/ascii/&quot;&gt;ASCII Generator&lt;/a&gt;, you can generate your ASCII texts。&lt;/p&gt;
+
+&lt;p&gt;Such like the &lt;strong&gt;&lt;code class=&quot;highlighter-rouge&quot;&gt;XIXIA&lt;/code&gt;&lt;/strong&gt;！&lt;/p&gt;
+
+&lt;figure class=&quot;highlight&quot;&gt;&lt;pre&gt;&lt;code class=&quot;language-v&quot; data-lang=&quot;v&quot;&gt;____  ___._______  ___.___   _____   
+\   \/  /|   \   \/  /|   | /  _  \  
+ \     / |   |\     / |   |/  /_\  \ 
+ /     \ |   |/     \ |   /    |    \
+/___/\  \|___/___/\  \|___\____|__  /
+      \_/          \_/            \/ 
+
+------------------------------------
+___   ___  __  ___   ___  __       ___      
+\  \ /  / |  | \  \ /  / |  |     /   \     
+ \  V  /  |  |  \  V  /  |  |    /  ^  \    
+  &amp;gt;   &amp;lt;   |  |   &amp;gt;   &amp;lt;   |  |   /  /_\  \   
+ /  .  \  |  |  /  .  \  |  |  /  _____  \  
+/__/ \__\ |__| /__/ \__\ |__| /__/     \__\ 
+
+------------------------------------
+__   _________   _______          
+\ \ / /_   _\ \ / /_   _|   /\    
+ \ V /  | |  \ V /  | |    /  \   
+  &amp;gt; &amp;lt;   | |   &amp;gt; &amp;lt;   | |   / /\ \  
+ / . \ _| |_ / . \ _| |_ / ____ \ 
+/_/ \_\_____/_/ \_\_____/_/    \_\   &lt;/code&gt;&lt;/pre&gt;&lt;/figure&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+&lt;h3 id=&quot;2chriscom&quot;&gt;2，Chris.com&lt;/h3&gt;
+&lt;p&gt;&lt;a href=&quot;http://www.chris.com/ascii/&quot;&gt;Chris.com&lt;/a&gt; collects a lot of ASCII pics, such like the world map：&lt;/p&gt;
+
+&lt;figure class=&quot;highlight&quot;&gt;&lt;pre&gt;&lt;code class=&quot;language-v&quot; data-lang=&quot;v&quot;&gt;-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----
+           . _..::__:  ,-&quot;-&quot;._        |7       ,     _,.__
+   _.___ _ _&amp;lt;_&amp;gt;`!(._`.`-.    /         _._     `_ ,_/  '  '-._.---.-.__
+&amp;gt;.{     &quot; &quot; `-==,',._\{  \  / {)      / _ &quot;&amp;gt;_,-' `                mt-2_
+  \_.:--.       `._ )`^-. &quot;'       , [_/(                       __,/-'
+ '&quot;'     \         &quot;    _L        oD_,--'                )     /. (|
+          |           ,'          _)_.\\._&amp;lt;&amp;gt; 6              _,' /  '
+          `.         /           [_/_'` `&quot;(                &amp;lt;'}  )
+           \\    .-. )           /   `-'&quot;..' `:.#          _)  '
+    `        \  (  `(           /         `:\  &amp;gt; \  ,-^.  /' '
+              `._,   &quot;&quot;         |           \`'   \|   ?_)  {\
+                 `=.---.        `._._       ,'     &quot;`  |' ,- '.
+                   |    `-._         |     /          `:`&amp;lt;_|h--._
+                   (        &amp;gt;        .     | ,          `=.__.`-'\
+                    `.     /         |     |{|              ,-.,\     .
+                     |   ,'           \   / `'            ,&quot;     \
+                     |  /              |_'                |  __  /
+                     | |                                  '-'  `-'   \.
+                     |/                                         &quot;    /
+                     \.                                             '
+
+                      ,/            ______._.--._ _..---.---------._
+     ,-----&quot;-..?----_/ )      __,-'&quot;             &quot;                  (
+-.._(                  `-----'                                       `-
+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----+-----
+Map (C) 1998 Matthew Thomas. Freely usable if this line is included. &amp;lt;-&lt;/code&gt;&lt;/pre&gt;&lt;/figure&gt;
+
+&lt;p&gt;&lt;br /&gt;
+Elephant.&lt;/p&gt;
+
+&lt;figure class=&quot;highlight&quot;&gt;&lt;pre&gt;&lt;code class=&quot;language-v&quot; data-lang=&quot;v&quot;&gt;              ___.-~&quot;~-._   __....__
+            .'    `    \ ~&quot;~        ``-.
+           /` _      )  `\              `\
+          /`  a)    /     |               `\
+         :`        /      |                 \
+    &amp;lt;`-._|`  .-.  (      /   .            `;\\
+     `-. `--'_.'-.;\___/'   .      .       | \\
+  _     /:--`     |        /     /        .'  \\
+ (&quot;\   /`/        |       '     '         /    :`;
+ `\'\_/`/         .\     /`~`=-.:        /     ``
+   `._.'          /`\    |      `\      /(
+                 /  /\   |        `Y   /  \
+           jgs  J  /  Y  |         |  /`\  \
+               /  |   |  |         |  |  |  |
+              &quot;---&quot;  /___|        /___|  /__|
+                     '&quot;&quot;&quot;         '&quot;&quot;&quot;  '&quot;&quot;&quot;&lt;/code&gt;&lt;/pre&gt;&lt;/figure&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+&lt;h3 id=&quot;3welcome-to-lost-in-xixia&quot;&gt;3，Welcome to lost in Xixia&lt;/h3&gt;
+&lt;p&gt;The 404 page of Xixia, is based on ASCII pics and ASCII texts!&lt;/p&gt;
+
+&lt;p&gt;So, warmly welcome you to lost in &lt;a href=&quot;http://xixia.info/welcome-lost-in-xixia&quot;&gt;Xixia&lt;/a&gt;!&lt;/p&gt;
+
+&lt;p&gt;&lt;br /&gt;&lt;/p&gt;
+&lt;h3 id=&quot;thanks&quot;&gt;Thanks：&lt;/h3&gt;
+
+&lt;p&gt;1，&lt;a href=&quot;http://www.chris.com/ascii/&quot;&gt;Chris.com&lt;/a&gt;&lt;/p&gt;
+
+&lt;p&gt;2，&lt;a href=&quot;http://www.network-science.de/ascii/&quot;&gt;ASCII Generator&lt;/a&gt;&lt;/p&gt;
+
+</description>
+				<pubDate>Fri, 15 Sep 2017 00:00:00 +0800</pubDate>
+				<link>http://localhost:4000/jekyll-xixia/programmer/2017/09/15/ascii-art-and-text.html</link>
+				<guid isPermaLink="true">http://localhost:4000/jekyll-xixia/programmer/2017/09/15/ascii-art-and-text.html</guid>
+			</item>
+		
+			<item>
+				<title>Welcome to Jekyll!</title>
+				<description>&lt;p&gt;You’ll find this post in your &lt;code class=&quot;highlighter-rouge&quot;&gt;_posts&lt;/code&gt; directory. Go ahead and edit it and re-build the site to see your changes. You can rebuild the site in many different ways, but the most common way is to run &lt;code class=&quot;highlighter-rouge&quot;&gt;jekyll serve&lt;/code&gt;, which launches a web server and auto-regenerates your site when a file is updated.&lt;/p&gt;
+
+&lt;p&gt;To add new posts, simply add a file in the &lt;code class=&quot;highlighter-rouge&quot;&gt;_posts&lt;/code&gt; directory that follows the convention &lt;code class=&quot;highlighter-rouge&quot;&gt;YYYY-MM-DD-name-of-post.ext&lt;/code&gt; and includes the necessary front matter. Take a look at the source for this post to get an idea about how it works.&lt;/p&gt;
+
+&lt;p&gt;Jekyll also offers powerful support for code snippets:&lt;/p&gt;
+
+&lt;figure class=&quot;highlight&quot;&gt;&lt;pre&gt;&lt;code class=&quot;language-ruby&quot; data-lang=&quot;ruby&quot;&gt;&lt;span class=&quot;k&quot;&gt;def&lt;/span&gt; &lt;span class=&quot;nf&quot;&gt;print_hi&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+  &lt;span class=&quot;nb&quot;&gt;puts&lt;/span&gt; &lt;span class=&quot;s2&quot;&gt;&quot;Hi, &lt;/span&gt;&lt;span class=&quot;si&quot;&gt;#{&lt;/span&gt;&lt;span class=&quot;nb&quot;&gt;name&lt;/span&gt;&lt;span class=&quot;si&quot;&gt;}&lt;/span&gt;&lt;span class=&quot;s2&quot;&gt;&quot;&lt;/span&gt;
+&lt;span class=&quot;k&quot;&gt;end&lt;/span&gt;
+&lt;span class=&quot;n&quot;&gt;print_hi&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;(&lt;/span&gt;&lt;span class=&quot;s1&quot;&gt;'Tom'&lt;/span&gt;&lt;span class=&quot;p&quot;&gt;)&lt;/span&gt;
+&lt;span class=&quot;c1&quot;&gt;#=&amp;gt; prints 'Hi, Tom' to STDOUT.&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;&lt;/figure&gt;
+
+&lt;p&gt;Check out the &lt;a href=&quot;https://jekyllrb.com/docs/home&quot;&gt;Jekyll docs&lt;/a&gt; for more info on how to get the most out of Jekyll. File all bugs/feature requests at &lt;a href=&quot;https://github.com/jekyll/jekyll&quot;&gt;Jekyll’s GitHub repo&lt;/a&gt;. If you have questions, you can ask them on &lt;a href=&quot;https://talk.jekyllrb.com/&quot;&gt;Jekyll Talk&lt;/a&gt;.&lt;/p&gt;
+
+</description>
+				<pubDate>Tue, 05 Sep 2017 14:10:51 +0800</pubDate>
+				<link>http://localhost:4000/jekyll-xixia/jekyll/2017/09/05/welcome-to-jekyll.html</link>
+				<guid isPermaLink="true">http://localhost:4000/jekyll-xixia/jekyll/2017/09/05/welcome-to-jekyll.html</guid>
+			</item>
+		
+			<item>
+				<title>Readme of Jekyll!</title>
+				<description>&lt;h1 id=&quot;jekyll&quot;&gt;&lt;a href=&quot;https://jekyllrb.com/&quot;&gt;Jekyll&lt;/a&gt;&lt;/h1&gt;
+
+&lt;p&gt;&lt;a href=&quot;https://rubygems.org/gems/jekyll&quot;&gt;&lt;img src=&quot;https://img.shields.io/gem/v/jekyll.svg&quot; alt=&quot;Gem Version&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://travis-ci.org/jekyll/jekyll&quot;&gt;&lt;img src=&quot;https://img.shields.io/travis/jekyll/jekyll/master.svg?label=Linux%20build&quot; alt=&quot;Linux Build Status&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://ci.appveyor.com/project/jekyll/jekyll/branch/master&quot;&gt;&lt;img src=&quot;https://img.shields.io/appveyor/ci/jekyll/jekyll/master.svg?label=Windows%20build&quot; alt=&quot;Windows Build status&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://codeclimate.com/github/jekyll/jekyll/coverage&quot;&gt;&lt;img src=&quot;https://img.shields.io/codeclimate/coverage/github/jekyll/jekyll.svg&quot; alt=&quot;Test Coverage&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://codeclimate.com/github/jekyll/jekyll&quot;&gt;&lt;img src=&quot;https://img.shields.io/codeclimate/github/jekyll/jekyll.svg&quot; alt=&quot;Code Climate&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://gemnasium.com/jekyll/jekyll&quot;&gt;&lt;img src=&quot;https://img.shields.io/gemnasium/jekyll/jekyll.svg&quot; alt=&quot;Dependency Status&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://hakiri.io/github/jekyll/jekyll/master&quot;&gt;&lt;img src=&quot;https://hakiri.io/github/jekyll/jekyll/master.svg&quot; alt=&quot;Security&quot; /&gt;&lt;/a&gt;&lt;/p&gt;
+
+&lt;p&gt;Jekyll is a simple, blog-aware, static site generator perfect for personal, project, or organization sites. Think of it like a file-based CMS, without all the complexity. Jekyll takes your content, renders Markdown and Liquid templates, and spits out a complete, static website ready to be served by Apache, Nginx or another web server. Jekyll is the engine behind &lt;a href=&quot;https://pages.github.com&quot;&gt;GitHub Pages&lt;/a&gt;, which you can use to host sites right from your GitHub repositories.&lt;/p&gt;
+
+&lt;h2 id=&quot;philosophy&quot;&gt;Philosophy&lt;/h2&gt;
+
+&lt;p&gt;Jekyll does what you tell it to do — no more, no less. It doesn’t try to outsmart users by making bold assumptions, nor does it burden them with needless complexity and configuration. Put simply, Jekyll gets out of your way and allows you to concentrate on what truly matters: your content.&lt;/p&gt;
+
+&lt;p&gt;See: https://jekyllrb.com/philosophy&lt;/p&gt;
+
+&lt;h2 id=&quot;having-trouble&quot;&gt;Having trouble?&lt;/h2&gt;
+
+&lt;p&gt;See: https://jekyllrb.com/docs/troubleshooting/&lt;/p&gt;
+
+&lt;h2 id=&quot;getting-started&quot;&gt;Getting Started&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href=&quot;https://jekyllrb.com/docs/installation/&quot;&gt;Install&lt;/a&gt; the gem&lt;/li&gt;
+  &lt;li&gt;Read up about its &lt;a href=&quot;https://jekyllrb.com/docs/usage/&quot;&gt;Usage&lt;/a&gt; and &lt;a href=&quot;https://jekyllrb.com/docs/configuration/&quot;&gt;Configuration&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;Take a gander at some existing &lt;a href=&quot;https://wiki.github.com/jekyll/jekyll/sites&quot;&gt;Sites&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://github.com/jekyll/jekyll/fork&quot;&gt;Fork&lt;/a&gt; and &lt;a href=&quot;https://jekyllrb.com/docs/contributing/&quot;&gt;Contribute&lt;/a&gt; your own modifications&lt;/li&gt;
+  &lt;li&gt;Have questions? Check out our official forum community &lt;a href=&quot;https://talk.jekyllrb.com/&quot;&gt;Jekyll Talk&lt;/a&gt; or &lt;a href=&quot;https://botbot.me/freenode/jekyll/&quot;&gt;&lt;code class=&quot;highlighter-rouge&quot;&gt;#jekyll&lt;/code&gt; on irc.freenode.net&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;code-of-conduct&quot;&gt;Code of Conduct&lt;/h2&gt;
+
+&lt;p&gt;In order to have a more open and welcoming community, Jekyll adheres to a
+&lt;a href=&quot;CODE_OF_CONDUCT.markdown&quot;&gt;code of conduct&lt;/a&gt; adapted from the Ruby on Rails code of
+conduct.&lt;/p&gt;
+
+&lt;p&gt;Please adhere to this code of conduct in any interactions you have in the
+Jekyll community. It is strictly enforced on all official Jekyll
+repositories, websites, and resources. If you encounter someone violating
+these terms, please let a &lt;a href=&quot;https://github.com/orgs/jekyll/teams/affinity-team-captains/members&quot;&gt;team captain&lt;/a&gt; know and we will address it as soon as possible.&lt;/p&gt;
+
+&lt;h2 id=&quot;diving-in&quot;&gt;Diving In&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href=&quot;http://import.jekyllrb.com/docs/home/&quot;&gt;Migrate&lt;/a&gt; from your previous system&lt;/li&gt;
+  &lt;li&gt;Learn how the &lt;a href=&quot;https://jekyllrb.com/docs/frontmatter/&quot;&gt;YAML Front Matter&lt;/a&gt; works&lt;/li&gt;
+  &lt;li&gt;Put information on your site with &lt;a href=&quot;https://jekyllrb.com/docs/variables/&quot;&gt;Variables&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;Customize the &lt;a href=&quot;https://jekyllrb.com/docs/permalinks/&quot;&gt;Permalinks&lt;/a&gt; your posts are generated with&lt;/li&gt;
+  &lt;li&gt;Use the built-in &lt;a href=&quot;https://jekyllrb.com/docs/templates/&quot;&gt;Liquid Extensions&lt;/a&gt; to make your life easier&lt;/li&gt;
+  &lt;li&gt;Use custom &lt;a href=&quot;https://jekyllrb.com/docs/plugins/&quot;&gt;Plugins&lt;/a&gt; to generate content specific to your site&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;license&quot;&gt;License&lt;/h2&gt;
+
+&lt;p&gt;See the &lt;a href=&quot;https://github.com/jekyll/jekyll/blob/master/LICENSE&quot;&gt;LICENSE&lt;/a&gt; file.&lt;/p&gt;
+</description>
+				<pubDate>Tue, 05 Sep 2017 14:10:51 +0800</pubDate>
+				<link>http://localhost:4000/jekyll-xixia/jekyll/2017/09/05/reademe-of-jekyll.html</link>
+				<guid isPermaLink="true">http://localhost:4000/jekyll-xixia/jekyll/2017/09/05/reademe-of-jekyll.html</guid>
+			</item>
+		
+			<item>
+				<title>Another copy of the Readme of Jekyll!</title>
+				<description>&lt;h1 id=&quot;jekyll&quot;&gt;&lt;a href=&quot;https://jekyllrb.com/&quot;&gt;Jekyll&lt;/a&gt;&lt;/h1&gt;
+
+&lt;p&gt;&lt;a href=&quot;https://rubygems.org/gems/jekyll&quot;&gt;&lt;img src=&quot;https://img.shields.io/gem/v/jekyll.svg&quot; alt=&quot;Gem Version&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://travis-ci.org/jekyll/jekyll&quot;&gt;&lt;img src=&quot;https://img.shields.io/travis/jekyll/jekyll/master.svg?label=Linux%20build&quot; alt=&quot;Linux Build Status&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://ci.appveyor.com/project/jekyll/jekyll/branch/master&quot;&gt;&lt;img src=&quot;https://img.shields.io/appveyor/ci/jekyll/jekyll/master.svg?label=Windows%20build&quot; alt=&quot;Windows Build status&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://codeclimate.com/github/jekyll/jekyll/coverage&quot;&gt;&lt;img src=&quot;https://img.shields.io/codeclimate/coverage/github/jekyll/jekyll.svg&quot; alt=&quot;Test Coverage&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://codeclimate.com/github/jekyll/jekyll&quot;&gt;&lt;img src=&quot;https://img.shields.io/codeclimate/github/jekyll/jekyll.svg&quot; alt=&quot;Code Climate&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://gemnasium.com/jekyll/jekyll&quot;&gt;&lt;img src=&quot;https://img.shields.io/gemnasium/jekyll/jekyll.svg&quot; alt=&quot;Dependency Status&quot; /&gt;&lt;/a&gt;
+&lt;a href=&quot;https://hakiri.io/github/jekyll/jekyll/master&quot;&gt;&lt;img src=&quot;https://hakiri.io/github/jekyll/jekyll/master.svg&quot; alt=&quot;Security&quot; /&gt;&lt;/a&gt;&lt;/p&gt;
+
+&lt;p&gt;Jekyll is a simple, blog-aware, static site generator perfect for personal, project, or organization sites. Think of it like a file-based CMS, without all the complexity. Jekyll takes your content, renders Markdown and Liquid templates, and spits out a complete, static website ready to be served by Apache, Nginx or another web server. Jekyll is the engine behind &lt;a href=&quot;https://pages.github.com&quot;&gt;GitHub Pages&lt;/a&gt;, which you can use to host sites right from your GitHub repositories.&lt;/p&gt;
+
+&lt;h2 id=&quot;philosophy&quot;&gt;Philosophy&lt;/h2&gt;
+
+&lt;p&gt;Jekyll does what you tell it to do — no more, no less. It doesn’t try to outsmart users by making bold assumptions, nor does it burden them with needless complexity and configuration. Put simply, Jekyll gets out of your way and allows you to concentrate on what truly matters: your content.&lt;/p&gt;
+
+&lt;p&gt;See: https://jekyllrb.com/philosophy&lt;/p&gt;
+
+&lt;h2 id=&quot;having-trouble&quot;&gt;Having trouble?&lt;/h2&gt;
+
+&lt;p&gt;See: https://jekyllrb.com/docs/troubleshooting/&lt;/p&gt;
+
+&lt;h2 id=&quot;getting-started&quot;&gt;Getting Started&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href=&quot;https://jekyllrb.com/docs/installation/&quot;&gt;Install&lt;/a&gt; the gem&lt;/li&gt;
+  &lt;li&gt;Read up about its &lt;a href=&quot;https://jekyllrb.com/docs/usage/&quot;&gt;Usage&lt;/a&gt; and &lt;a href=&quot;https://jekyllrb.com/docs/configuration/&quot;&gt;Configuration&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;Take a gander at some existing &lt;a href=&quot;https://wiki.github.com/jekyll/jekyll/sites&quot;&gt;Sites&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;&lt;a href=&quot;https://github.com/jekyll/jekyll/fork&quot;&gt;Fork&lt;/a&gt; and &lt;a href=&quot;https://jekyllrb.com/docs/contributing/&quot;&gt;Contribute&lt;/a&gt; your own modifications&lt;/li&gt;
+  &lt;li&gt;Have questions? Check out our official forum community &lt;a href=&quot;https://talk.jekyllrb.com/&quot;&gt;Jekyll Talk&lt;/a&gt; or &lt;a href=&quot;https://botbot.me/freenode/jekyll/&quot;&gt;&lt;code class=&quot;highlighter-rouge&quot;&gt;#jekyll&lt;/code&gt; on irc.freenode.net&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;code-of-conduct&quot;&gt;Code of Conduct&lt;/h2&gt;
+
+&lt;p&gt;In order to have a more open and welcoming community, Jekyll adheres to a
+&lt;a href=&quot;CODE_OF_CONDUCT.markdown&quot;&gt;code of conduct&lt;/a&gt; adapted from the Ruby on Rails code of
+conduct.&lt;/p&gt;
+
+&lt;p&gt;Please adhere to this code of conduct in any interactions you have in the
+Jekyll community. It is strictly enforced on all official Jekyll
+repositories, websites, and resources. If you encounter someone violating
+these terms, please let a &lt;a href=&quot;https://github.com/orgs/jekyll/teams/affinity-team-captains/members&quot;&gt;team captain&lt;/a&gt; know and we will address it as soon as possible.&lt;/p&gt;
+
+&lt;h2 id=&quot;diving-in&quot;&gt;Diving In&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;&lt;a href=&quot;http://import.jekyllrb.com/docs/home/&quot;&gt;Migrate&lt;/a&gt; from your previous system&lt;/li&gt;
+  &lt;li&gt;Learn how the &lt;a href=&quot;https://jekyllrb.com/docs/frontmatter/&quot;&gt;YAML Front Matter&lt;/a&gt; works&lt;/li&gt;
+  &lt;li&gt;Put information on your site with &lt;a href=&quot;https://jekyllrb.com/docs/variables/&quot;&gt;Variables&lt;/a&gt;&lt;/li&gt;
+  &lt;li&gt;Customize the &lt;a href=&quot;https://jekyllrb.com/docs/permalinks/&quot;&gt;Permalinks&lt;/a&gt; your posts are generated with&lt;/li&gt;
+  &lt;li&gt;Use the built-in &lt;a href=&quot;https://jekyllrb.com/docs/templates/&quot;&gt;Liquid Extensions&lt;/a&gt; to make your life easier&lt;/li&gt;
+  &lt;li&gt;Use custom &lt;a href=&quot;https://jekyllrb.com/docs/plugins/&quot;&gt;Plugins&lt;/a&gt; to generate content specific to your site&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;license&quot;&gt;License&lt;/h2&gt;
+
+&lt;p&gt;See the &lt;a href=&quot;https://github.com/jekyll/jekyll/blob/master/LICENSE&quot;&gt;LICENSE&lt;/a&gt; file.&lt;/p&gt;
+</description>
+				<pubDate>Tue, 05 Sep 2017 14:10:51 +0800</pubDate>
+				<link>http://localhost:4000/jekyll-xixia/jekyll/2017/09/05/another-copy-of-the-reademe-of-jekyll.html</link>
+				<guid isPermaLink="true">http://localhost:4000/jekyll-xixia/jekyll/2017/09/05/another-copy-of-the-reademe-of-jekyll.html</guid>
+			</item>
+		
+			<item>
+				<title>Tomcat系列9  Context生命周期管理</title>
+				<description>&lt;p&gt;tomcat管理着context的生命周期，如果在webapps目录下新增war包，则会启动新的context，如果删除war则会停止对应的context。这一切都是通过后台的一个check线程完成。这个线程在StandardEngine启动的时候初始化。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    @Override
+    protected synchronized void startInternal() throws LifecycleException {
+
+        // Log our server identification information
+        if(log.isInfoEnabled())
+            log.info( &quot;Starting Servlet Engine: &quot; + ServerInfo.getServerInfo());
+
+        // Standard container startup
+        super.startInternal();
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;StardardEngine启动的时候会调用抽象类ContainerBase的startInternal方法，该方法的最后一步会调用threadStart尝试启动线程，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    protected void threadStart() {
+
+        if (thread != null)
+            return;
+        if (backgroundProcessorDelay &amp;lt;= 0)
+            return;
+
+        threadDone = false;
+        String threadName = &quot;ContainerBackgroundProcessor[&quot; + toString() + &quot;]&quot;;
+        thread = new Thread(new ContainerBackgroundProcessor(), threadName);
+        thread.setDaemon(true);
+        thread.start();
+
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;这里说尝试启动线程是指该方法有可能不会启动线程，这取决于backgroundProcessorDelay这个值的大小。这个属性在StandardEngine被实例化的时候初始化成了10，10代表了每两次check之间间隔时间为10秒钟。ContainerBackgroundProcessor内部主要逻辑位于processChildren方法中，我们从方法的名字可以看出这个线程主要是针对子容器的处理。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        protected void processChildren(Container container) {
+            ClassLoader originalClassLoader = null;
+
+            try {
+                if (container instanceof Context) {
+					......
+                }
+                container.backgroundProcess();
+                Container[] children = container.findChildren();
+                for (int i = 0; i &amp;lt; children.length; i++) {
+                    if (children[i].getBackgroundProcessorDelay() &amp;lt;= 0) {
+                        processChildren(children[i]);
+                    }
+                }
+            } catch (Throwable t) {
+            }
+        }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;processChildren会遍历每个子容器，然后再递归调用processChildren处理这些子容器。StandardEngine的子容器是StandardHost，也就是说最终会进入到StandardHost的backgroundProcess。backgroundProcess方法位于容器的抽象类中，为容器提供后台处理能力，该方法最后会针对当前容器内部的各个LifecycleListener触发PERIODIC_EVENT这个事件。HostConfig是StandardHost所有LifecycleListener中的一个，也是真正管理context生命周期的LifecycleListener。HostConfig能够处理多种LifecycleEvent，PERIODIC_EVENT就是其中的一个。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;        // Process the event that has occurred
+        if (event.getType().equals(Lifecycle.PERIODIC_EVENT)) {
+            check();
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;当HostConfig接收到PERIODIC_EVENT这个事件的时候，会调用check方法完成所有context的生命周期管理。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    /**
+     * Check status of all webapps.
+     */
+    protected void check() {
+
+        if (host.getAutoDeploy()) {
+            // Check for resources modification to trigger redeployment
+            DeployedApplication[] apps =
+                deployed.values().toArray(new DeployedApplication[0]);
+            for (int i = 0; i &amp;lt; apps.length; i++) {
+                if (!isServiced(apps[i].name))
+                    checkResources(apps[i], false);
+            }
+
+            // Check for old versions of applications that can now be undeployed
+            if (host.getUndeployOldVersions()) {
+                checkUndeploy();
+            }
+
+            // Hotdeploy applications
+            deployApps();
+        }
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;check逻辑主要分为两个部分&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;管理已经启动的context -&amp;gt; checkResources()&lt;/li&gt;
+  &lt;li&gt;进入热启动阶段 -&amp;gt; deployApps()&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h2 id=&quot;管理已经启动的context&quot;&gt;管理已经启动的context&lt;/h2&gt;
+
+&lt;p&gt;首先看看check是如何处理已经启动的context的，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    protected synchronized void checkResources(DeployedApplication app,
+            boolean skipFileModificationResolutionCheck) {
+        String[] resources =
+            app.redeployResources.keySet().toArray(new String[0]);
+        // Offset the current time by the resolution of File.lastModified()
+        long currentTimeWithResolutionOffset =
+                System.currentTimeMillis() - FILE_MODIFICATION_RESOLUTION_MS;
+        for (int i = 0; i &amp;lt; resources.length; i++) {
+            long lastModified =
+                    app.redeployResources.get(resources[i]).longValue();
+            if (resource.exists() || lastModified == 0) {
+                if (resource.lastModified() != lastModified &amp;amp;&amp;amp; (!host.getAutoDeploy() ||
+                        resource.lastModified() &amp;lt; currentTimeWithResolutionOffset ||
+                        skipFileModificationResolutionCheck)) {
+                    if (resource.isDirectory()) {
+                        app.redeployResources.put(resources[i],
+                                Long.valueOf(resource.lastModified()));
+                    } else if (app.hasDescriptor &amp;amp;&amp;amp;
+                            resource.getName().toLowerCase(
+                                    Locale.ENGLISH).endsWith(&quot;.war&quot;)) {
+                        Context context = (Context) host.findChild(app.name);
+                        String docBase = context.getDocBase();
+                        if (!docBase.toLowerCase(Locale.ENGLISH).endsWith(&quot;.war&quot;)) {
+                            File docBaseFile = new File(docBase);
+                            if (!docBaseFile.isAbsolute()) {
+                                docBaseFile = new File(host.getAppBaseFile(),
+                                        docBase);
+                            }
+                            reload(app, docBaseFile, resource.getAbsolutePath());
+                        } else {
+                            reload(app, null, null);
+                        }
+                        // Update times
+                        app.redeployResources.put(resources[i],
+                                Long.valueOf(resource.lastModified()));
+                        app.timestamp = System.currentTimeMillis();
+                        boolean unpackWAR = unpackWARs;
+                        if (unpackWAR &amp;amp;&amp;amp; context instanceof StandardContext) {
+                            unpackWAR = ((StandardContext) context).getUnpackWAR();
+                        }
+                        if (unpackWAR) {
+                            addWatchedResources(app, context.getDocBase(), context);
+                        } else {
+                            addWatchedResources(app, null, context);
+                        }
+                        return;
+                    } else {
+                        undeploy(app);
+                        deleteRedeployResources(app, resources, i, false);
+                        return;
+                    }
+                }
+            } else {
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException e1) {
+                }
+                if (resource.exists()) {
+                    continue;
+                }
+                undeploy(app);
+                deleteRedeployResources(app, resources, i, true);
+                return;
+            }
+        }
+        resources = app.reloadResources.keySet().toArray(new String[0]);
+        boolean update = false;
+        for (int i = 0; i &amp;lt; resources.length; i++) {
+            File resource = new File(resources[i]);
+            if (log.isDebugEnabled()) {
+                log.debug(&quot;Checking context[&quot; + app.name + &quot;] reload resource &quot; + resource);
+            }
+            long lastModified = app.reloadResources.get(resources[i]).longValue();
+            if ((resource.lastModified() != lastModified &amp;amp;&amp;amp;
+                    (!host.getAutoDeploy() ||
+                            resource.lastModified() &amp;lt; currentTimeWithResolutionOffset ||
+                            skipFileModificationResolutionCheck)) ||
+                    update) {
+                if (!update) {
+                    // Reload application
+                    reload(app, null, null);
+                    update = true;
+                }
+                // Update times. More than one file may have been updated. We
+                // don't want to trigger a series of reloads.
+                app.reloadResources.put(resources[i],
+                        Long.valueOf(resource.lastModified()));
+            }
+            app.timestamp = System.currentTimeMillis();
+        }
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;checkResources的代码比较长，不过大致可以分为两个阶段&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;redeployResources&lt;/li&gt;
+  &lt;li&gt;reloadResources&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;h3 id=&quot;redeployresources&quot;&gt;redeployResources&lt;/h3&gt;
+
+&lt;p&gt;&lt;strong&gt;&lt;em&gt;获取context的redeployResources&lt;/em&gt;&lt;/strong&gt;，一般情况下会包含下面四个resource，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;webapps\XXX.war
+conf\Catalina\localhost\XXX.xml
+webapps\ROOT
+conf\context.xml
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;上面四个资源分别代表，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;当前context的war
+当前context配置
+当前context解压后的内容
+全局context配置
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;遍历context的redeployResources中的每个resource，分别判断resource是否还存在，&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;如果存在&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;判断当前文件是否最近有过修改，如果有则进入步骤2，否则到6&lt;/li&gt;
+  &lt;li&gt;如果文件是文件夹则更新最近修改时间，否则进入步骤3&lt;/li&gt;
+  &lt;li&gt;如果在如果conf/catalina/localhost/中包含当前context的context.xml(如果context对应的是ROOT，则为ROOT.xml)，同时当前resource是以.war结尾的，也就是说war包被修改了，则进入步骤4，否则进入步骤5&lt;/li&gt;
+  &lt;li&gt;当前context的docBase是否以.war结尾，这个的意思是是说是否在启动的时候是否直接从.war加载context，而不解压.war。也就是说server.xml中是否配置了unpackWARs=”false“。如果是以.war结尾，则直接进行reload操作。否则先清除当前docBase目录，然后根据war重新加载Context。然后进入步骤6&lt;/li&gt;
+  &lt;li&gt;清除当前docBase目录，将当前context从host中移除。然后进入步骤6&lt;/li&gt;
+  &lt;li&gt;结束&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;ul&gt;
+  &lt;li&gt;如果不存在&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;将当前context从host中移除。&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;下面是undeploy()函数的代码，根据context的name查找对应的context，调用context的stopInternal完成context的终止，然后将其从host的child中移除。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    private void undeploy(DeployedApplication app) {
+        if (log.isInfoEnabled())
+            log.info(sm.getString(&quot;hostConfig.undeploy&quot;, app.name));
+        Container context = host.findChild(app.name);
+        try {
+            host.removeChild(context);
+        } catch (Throwable t) {
+            ExceptionUtils.handleThrowable(t);
+            log.warn(sm.getString
+                     (&quot;hostConfig.context.remove&quot;, app.name), t);
+        }
+        deployed.remove(app.name);
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;总的来说上面的步骤是针对被删除了或者修改过的context做移除或者reload操作。&lt;/p&gt;
+
+&lt;h3 id=&quot;reloadresources&quot;&gt;reloadResources&lt;/h3&gt;
+&lt;p&gt;&lt;strong&gt;&lt;em&gt;获取context的reloadResources&lt;/em&gt;&lt;/strong&gt;，然后查看是否有修改，如果有则重新reaload资源。reloadResources定义在conf/context.xml以及当前context的自定义配置，这个自定义位于conf\Catalina\localhost\XXX.xml，XXX代表着context对应的名称。&lt;/p&gt;
+
+&lt;p&gt;比如全局的context.xml中定义着如下内容，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&amp;lt;Context&amp;gt;
+    &amp;lt;WatchedResource&amp;gt;WEB-INF/web.xml&amp;lt;/WatchedResource&amp;gt;
+    &amp;lt;WatchedResource&amp;gt;${catalina.base}/conf/web.xml&amp;lt;/WatchedResource&amp;gt;
+&amp;lt;/Context&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;那么系统则会监控WEB-INF/web.xml和/conf/web.xml这两个文件，一旦有改动则会尝试reload context。&lt;/p&gt;
+
+&lt;p&gt;处理完之后就进入到热启动阶段。&lt;/p&gt;
+
+&lt;h2 id=&quot;进入热启动阶段&quot;&gt;进入热启动阶段&lt;/h2&gt;
+
+&lt;p&gt;热启动阶段会加载某些还没有加载的context。在正常情况下该步骤不会加载context，但是如果用户删除了某个context的docBase，并且该docBase对应的war还存在，这里就会重新解压对应的war，然后重新加载context&lt;/p&gt;
+
+&lt;h2 id=&quot;举例&quot;&gt;举例&lt;/h2&gt;
+
+&lt;p&gt;下面举个例子来说明下上面的步骤，场景如下，&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;webapps目录下有如下文件ROOT, ROOT.war&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;下面的所有操作都会触发刷新操作。&lt;/p&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;删除ROOT&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;这会导致tomcat停止并且移除当前context，然后解压ROOT.war，重新加载context。打印日志如下，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;信息: Undeploying context [/ROOT]
+七月 30, 2017 8:17:59 下午 org.apache.catalina.core.TestListener lifecycleEvent
+信息: context /ROOT stop
+七月 30, 2017 8:17:59 下午 org.apache.catalina.startup.HostConfig deployWAR
+信息: Deploying web application archive D:\源码阅读\apache-tomcat-8.5.11-src\webapps\ROOT.war
+七月 30, 2017 8:18:01 下午 org.apache.catalina.startup.HostConfig deployWAR
+信息: Deployment of web application archive D:\源码阅读\apache-tomcat-8.5.11-src\webapps\ROOT.war has finished in 2,298 ms
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;删除ROOT.war&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;这会导致tomcat停止并且移除当前context, 同时删除ROOT目录。打印日志如下，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;七月 30, 2017 8:19:01 下午 org.apache.catalina.startup.HostConfig undeploy
+信息: Undeploying context [/ROOT]
+七月 30, 2017 8:19:01 下午 org.apache.catalina.core.TestListener lifecycleEvent
+信息: context /ROOT stop
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;在ROOT.war中加入一个文件&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;如果conf/catalina/localhost/中不包含ROOT.xml，删除ROOT，重新解压war，同时重新加载context。打印日志如下，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;七月 30, 2017 8:20:34 下午 org.apache.catalina.startup.HostConfig undeploy
+信息: Undeploying context [/ROOT]
+七月 30, 2017 8:20:34 下午 org.apache.catalina.core.TestListener lifecycleEvent
+信息: context /ROOT stop
+七月 30, 2017 8:20:34 下午 org.apache.catalina.startup.HostConfig deployWAR
+信息: Deploying web application archive D:\源码阅读\apache-tomcat-8.5.11-src\webapps\ROOT.war
+七月 30, 2017 8:20:36 下午 org.apache.catalina.startup.HostConfig deployWAR
+信息: Deployment of web application archive D:\源码阅读\apache-tomcat-8.5.11-src\webapps\ROOT.war has finished in 2,168 ms
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;如果conf/catalina/localhost/中包含ROOT.xml，删除ROOT，重新解压war，同时重新加载context。日志如下，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;七月 30, 2017 9:49:01 下午 org.apache.catalina.startup.HostConfig reload
+信息: Reloading context [/ROOT]
+七月 30, 2017 9:49:01 下午 org.apache.catalina.core.StandardContext reload
+信息: Reloading Context with name [/ROOT] has started
+七月 30, 2017 9:49:01 下午 org.apache.catalina.core.TestListener lifecycleEvent
+信息: context /ROOT stop
+七月 30, 2017 9:49:03 下午 org.apache.jasper.servlet.TldScanner scanJars
+信息: At least one JAR was scanned for TLDs yet contained no TLDs. Enable debug logging for this logger for a complete list of JARs that were scanned but no TLDs were found in them. Skipping unneeded JARs during scanning can improve startup time and JSP compilation time.
+七月 30, 2017 9:49:03 下午 org.apache.catalina.core.StandardContext reload
+信息: Reloading Context with name [/ROOT] is completed
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;新增ROOT2.war&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;解压ROOT2.war为ROOT2，加载新的context。打印日志如下，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;七月 30, 2017 8:21:46 下午 org.apache.catalina.startup.HostConfig deployWAR
+信息: Deploying web application archive D:\源码阅读\apache-tomcat-8.5.11-src\webapps\ROOT2.war
+七月 30, 2017 8:21:48 下午 org.apache.jasper.servlet.TldScanner scanJars
+信息: At least one JAR was scanned for TLDs yet contained no TLDs. Enable debug logging for this logger for a complete list of JARs that were scanned but no TLDs were found in them. Skipping unneeded JARs during scanning can improve startup time and JSP compilation time.
+七月 30, 2017 8:21:48 下午 org.apache.catalina.startup.HostConfig deployWAR
+信息: Deployment of web application archive D:\源码阅读\apache-tomcat-8.5.11-src\webapps\ROOT2.war has finished in 2,185 ms
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;修改conf/context.xml&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;删除ROOT，重新解压缩war，同时重新加载context。打印日志如下，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;七月 30, 2017 9:07:35 下午 org.apache.catalina.startup.HostConfig undeploy
+信息: Undeploying context [/ROOT]
+七月 30, 2017 9:07:35 下午 org.apache.catalina.core.TestListener lifecycleEvent
+信息: context /ROOT stop
+七月 30, 2017 9:07:35 下午 org.apache.catalina.startup.HostConfig deployWAR
+信息: Deploying web application archive D:\源码阅读\apache-tomcat-8.5.11-src\webapps\ROOT.war
+七月 30, 2017 9:07:37 下午 org.apache.jasper.servlet.TldScanner scanJars
+信息: At least one JAR was scanned for TLDs yet contained no TLDs. Enable debug logging for this logger for a complete list of JARs that were scanned but no TLDs were found in them. Skipping unneeded JARs during scanning can improve startup time and JSP compilation time.
+七月 30, 2017 9:07:37 下午 org.apache.catalina.startup.HostConfig deployWAR
+信息: Deployment of web application archive D:\源码阅读\apache-tomcat-8.5.11-src\webapps\ROOT.war has finished in 2,274 ms
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;修改conf/catalina/localhost/ROOT.xml&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;删除ROOT，重新解压缩war，同时重新加载context。打印日志如下，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;七月 30, 2017 9:10:16 下午 org.apache.catalina.startup.HostConfig undeploy
+信息: Undeploying context [/ROOT]
+七月 30, 2017 9:10:16 下午 org.apache.catalina.core.TestListener lifecycleEvent
+信息: context /ROOT stop
+七月 30, 2017 9:10:16 下午 org.apache.catalina.startup.HostConfig deployDescriptor
+信息: Deploying configuration descriptor D:\源码阅读\apache-tomcat-8.5.11-src\conf\Catalina\localhost\ROOT.xml
+七月 30, 2017 9:10:19 下午 org.apache.jasper.servlet.TldScanner scanJars
+信息: At least one JAR was scanned for TLDs yet contained no TLDs. Enable debug logging for this logger for a complete list of JARs that were scanned but no TLDs were found in them. Skipping unneeded JARs during scanning can improve startup time and JSP compilation time.
+七月 30, 2017 9:10:19 下午 org.apache.catalina.startup.HostConfig deployDescriptor
+信息: Deployment of configuration descriptor D:\源码阅读\apache-tomcat-8.5.11-src\conf\Catalina\localhost\ROOT.xml has finished in 2,355 ms
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;ol&gt;
+  &lt;li&gt;修改conf/web.xml&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;重新加载context。打印日志如下，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;信息: Reloading context [/ROOT]
+七月 30, 2017 9:41:21 下午 org.apache.catalina.core.StandardContext reload
+信息: Reloading Context with name [/ROOT] has started
+七月 30, 2017 9:41:21 下午 org.apache.catalina.core.TestListener lifecycleEvent
+信息: context /ROOT stop
+七月 30, 2017 9:41:24 下午 org.apache.jasper.servlet.TldScanner scanJars
+信息: At least one JAR was scanned for TLDs yet contained no TLDs. Enable debug logging for this logger for a complete list of JARs that were scanned but no TLDs were found in them. Skipping unneeded JARs during scanning can improve startup time and JSP compilation time.
+七月 30, 2017 9:41:24 下午 org.apache.catalina.core.StandardContext reload
+信息: Reloading Context with name [/ROOT] is completed
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+</description>
+				<pubDate>Sun, 30 Jul 2017 00:00:00 +0800</pubDate>
+				<link>http://localhost:4000/jekyll-xixia/2017/07/30/tomcat%E7%B3%BB%E5%88%979-Context%E7%94%9F%E5%91%BD%E5%91%A8%E6%9C%9F%E7%AE%A1%E7%90%86.html</link>
+				<guid isPermaLink="true">http://localhost:4000/jekyll-xixia/2017/07/30/tomcat%E7%B3%BB%E5%88%979-Context%E7%94%9F%E5%91%BD%E5%91%A8%E6%9C%9F%E7%AE%A1%E7%90%86.html</guid>
+			</item>
+		
+			<item>
+				<title>Tomcat系列8  类加载器webappclassloader</title>
+				<description>&lt;p&gt;tomcat以Context作为基本单位部署应用，每个应用在tomcat中对应一个Context。为了使应用之间影响降到最低，每个应用都有自己的类加载器。java默认的类加载机制是父代理模式，也就是加载请求会一直往上代理给父加载器。但是tomcat默认的类加载器没有采用这种模式，下面来看一下tomcat默认的类加载器WebappClassLoader是如何实现的。&lt;/p&gt;
+
+&lt;p&gt;整个过程可以大致分为下面的几个步骤，&lt;/p&gt;
+&lt;ol&gt;
+  &lt;li&gt;从缓存查找&lt;/li&gt;
+  &lt;li&gt;使用java的ExtClassLoader加载&lt;/li&gt;
+  &lt;li&gt;如果有需要则代理给父类加载器&lt;/li&gt;
+  &lt;li&gt;搜索本地目录加载&lt;/li&gt;
+  &lt;li&gt;代理给父类加载器&lt;/li&gt;
+&lt;/ol&gt;
+
+&lt;p&gt;下面分别解释下上面的步骤做了什么，&lt;/p&gt;
+&lt;h1 id=&quot;从缓存查找&quot;&gt;从缓存查找&lt;/h1&gt;
+
+&lt;p&gt;从缓存查找主要分为两步，一步是从当前的类加载器的内部缓存查找，另一步是从虚拟机的缓存中查找。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;            // (0) Check our previously loaded local class cache
+            clazz = findLoadedClass0(name);
+            if (clazz != null) {
+                if (log.isDebugEnabled())
+                    log.debug(&quot;  Returning class from cache&quot;);
+                if (resolve)
+                    resolveClass(clazz);
+                return (clazz);
+            }
+
+            // (0.1) Check our previously loaded class cache
+            clazz = findLoadedClass(name);
+            if (clazz != null) {
+                if (log.isDebugEnabled())
+                    log.debug(&quot;  Returning class from cache&quot;);
+                if (resolve)
+                    resolveClass(clazz);
+                return (clazz);
+            }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;WebAppClassLoader重写了findLoadedClass0方法，这样做好处是首先从类加载器的内部缓存查找对应的类，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    protected Class&amp;lt;?&amp;gt; findLoadedClass0(String name) {
+
+        String path = binaryNameToPath(name, true);
+
+        ResourceEntry entry = resourceEntries.get(path);
+        if (entry != null) {
+            return entry.loadedClass;
+        }
+        return null;
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;上面代码的resourceEntries就是类加载器的内部缓存，记录了类路径对应的资源以及加载的类，这个缓存会在步骤4中得到更新。如果本地缓存没有，则调动父类的findLoadedClass查找类，这个方法会调用jvm提供的native方法，进行类查找。&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;之所以会有两层缓存，我认为是存在并发的情况。在某些场景下步骤4加载完缓存后还没来得及更新本地缓存，这时候另一个类加载请求在本地缓存中查找不到类，如果没有jvm层面的这次缓存查找，则会进入到复杂的类加载环节中，降低整体的性能。&lt;/strong&gt;&lt;/p&gt;
+
+&lt;h1 id=&quot;使用java的extclassloader加载&quot;&gt;使用java的ExtClassLoader加载&lt;/h1&gt;
+
+&lt;p&gt;这一步是为了防止WebappClassLoader覆盖Java SE的类。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt; ClassLoader javaseLoader = getJavaseClassLoader();
+            boolean tryLoadingFromJavaseLoader;
+            try {
+                // Use getResource as it won't trigger an expensive
+                // ClassNotFoundException if the resource is not available from
+                // the Java SE class loader. However (see
+                // https://bz.apache.org/bugzilla/show_bug.cgi?id=58125 for
+                // details) when running under a security manager in rare cases
+                // this call may trigger a ClassCircularityError.
+                tryLoadingFromJavaseLoader = (javaseLoader.getResource(resourceName) != null);
+            } catch (ClassCircularityError cce) {
+                // The getResource() trick won't work for this class. We have to
+                // try loading it directly and accept that we might get a
+                // ClassNotFoundException.
+                tryLoadingFromJavaseLoader = true;
+            }
+
+            if (tryLoadingFromJavaseLoader) {
+                try {
+                    clazz = javaseLoader.loadClass(name);
+                    if (clazz != null) {
+                        if (resolve)
+                            resolveClass(clazz);
+                        return (clazz);
+                    }
+                } catch (ClassNotFoundException e) {
+                    // Ignore
+                }
+            }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;这里有一个小的优化点，不是直接调用loadClass去加载类，而是先尝试使用getResource获取资源，如果资源存在再进行类加载，这样防止触发ClassNotFoundException。&lt;/p&gt;
+
+&lt;h1 id=&quot;如果有需要则代理给父类加载器&quot;&gt;如果有需要则代理给父类加载器&lt;/h1&gt;
+
+&lt;p&gt;这一步首先会判断tomcat启动的时候是否设置了delgate属性，如果设置了则直接代理给父加载器，这里也就是URLClassLoader。如果没有设置这个属性，则会判断当前需要加载的类是否满足某些特性，如果满足也代理给父类加载器。这里的特性是指加载的类在下面的package中，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;javax.el.*
+javax.servlet.*
+javax.websocket.*
+javax.securit.auth.message.*
+org.apache.el
+org.apache.catalina.*
+org.apache.jasper.*
+org.apache.juli.*
+org.apache.tomcat.*
+org.apache.naming.*
+org.apache.coyote.*
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;这所以将这些类代理给父类是因为这些类在tomcat启动后应该是唯一的，如果由WebappClassLoader来加载则会出现下面的情况，&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;某个tomcat的包被打包到了lib目录下，但是这个包与当前tomcat版本不兼容，这时候就会出现WebappClassLoader首先加载该类导致系统出现诡异的问题。&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;h1 id=&quot;搜索本地目录加载&quot;&gt;搜索本地目录加载&lt;/h1&gt;
+&lt;p&gt;这个步骤会扫描当前context下面的lib目录以及classes目录，查找相应的类。这个步骤在大多数情况下加载的都是与业务相关联的类，与tomcat框架关联不是很大。加载完的类会被记录到当前类加载的内部缓存中，也就是之前提到的resourceEntries中。这样提高了类加载的效率。。&lt;/p&gt;
+
+&lt;h1 id=&quot;代理给父类加载器&quot;&gt;代理给父类加载器&lt;/h1&gt;
+&lt;p&gt;如果之前的步骤都加载不到该类，则尝试使用父类加载器进行加载。如果还是加载不到，则最后返回ClassNotFoundException。&lt;/p&gt;
+
+&lt;h1 id=&quot;总结&quot;&gt;总结&lt;/h1&gt;
+
+&lt;p&gt;类的加载过程大致如上所示，接下来我们讨论下这么做究竟有什么好处？设想一下下面的场景，&lt;/p&gt;
+&lt;blockquote&gt;
+  &lt;p&gt;context A和context B都是用了a.jar，但是两个版本不一致。如果采用传统的类加载方式会出现下面的问题&lt;br /&gt;
+time1: context A加载classC，然后将这个加载操作被代理给了父类加载器，如果父类加载器加载成功返回。&lt;br /&gt;
+time2: context B也加载classC，然后将这个加载操作代理给父类加载器，由于context A和context B使用到的父类加载器是同一个那么返回的是  time1阶段加载的那个类，但是由于业务需要context A和context B使用的classC应该是不同版本才对，返回相同的结果导致了结果的不确定性，甚至  &amp;gt; 系统不可用&lt;/p&gt;
+&lt;/blockquote&gt;
+
+&lt;p&gt;通过上面的例子我们了解到对于非jdk和tomcat框架的类，一般都采用子加载器优先而不是父加载器优先的原因。&lt;/p&gt;
+
+</description>
+				<pubDate>Sat, 29 Jul 2017 00:00:00 +0800</pubDate>
+				<link>http://localhost:4000/jekyll-xixia/2017/07/29/tomcat%E7%B3%BB%E5%88%978-%E7%B1%BB%E5%8A%A0%E8%BD%BD%E5%99%A8WebappClassLoader.html</link>
+				<guid isPermaLink="true">http://localhost:4000/jekyll-xixia/2017/07/29/tomcat%E7%B3%BB%E5%88%978-%E7%B1%BB%E5%8A%A0%E8%BD%BD%E5%99%A8WebappClassLoader.html</guid>
+			</item>
+		
+			<item>
+				<title>Tomcat系列7  Lifecyclelistener</title>
+				<description>&lt;p&gt;LifecycleListener用于定义生命周期事件监听器，监听的时间包括组件启动和停止等。LifecycleListener的定义如下，
+···
+public interface LifecycleListener {&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;/**
+ * Acknowledge the occurrence of the specified event.
+ *
+ * @param event LifecycleEvent that has occurred
+ */
+public void lifecycleEvent(LifecycleEvent event);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;}
+···
+生命周期的各个阶段的定义位于Lifecycle中，各个阶段的状态转移如下所示，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt; *            start()
+ *  -----------------------------
+ *  |                           |
+ *  | init()                    |
+ * NEW -»-- INITIALIZING        |
+ * | |           |              |     ------------------«-----------------------
+ * | |           |auto          |     |                                        |
+ * | |          \|/    start() \|/   \|/     auto          auto         stop() |
+ * | |      INITIALIZED --»-- STARTING_PREP --»- STARTING --»- STARTED --»---  |
+ * | |         |                                                            |  |
+ * | |destroy()|                                                            |  |
+ * | --»-----«--    ------------------------«--------------------------------  ^
+ * |     |          |                                                          |
+ * |     |         \|/          auto                 auto              start() |
+ * |     |     STOPPING_PREP ----»---- STOPPING ------»----- STOPPED -----»-----
+ * |    \|/                               ^                     |  ^
+ * |     |               stop()           |                     |  |
+ * |     |       --------------------------                     |  |
+ * |     |       |                                              |  |
+ * |     |       |    destroy()                       destroy() |  |
+ * |     |    FAILED ----»------ DESTROYING ---«-----------------  |
+ * |     |                        ^     |                          |
+ * |     |     destroy()          |     |auto                      |
+ * |     --------»-----------------    \|/                         |
+ * |                                 DESTROYED                     |
+ * |                                                               |
+ * |                            stop()                             |
+ * ----»-----------------------------»------------------------------
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;在大多数情况下tomcat中的组件出现生命周期迁移都会触发LifecycleBase的fireLifecycleEvent方法，该方法内部依次调用当前组件的各个listener的lifecycleEvent，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    protected void fireLifecycleEvent(String type, Object data) {
+        LifecycleEvent event = new LifecycleEvent(this, type, data);
+        for (LifecycleListener listener : lifecycleListeners) {
+            listener.lifecycleEvent(event);
+        }
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;Listener的定义需要在server.xml中，并且位于&lt;code class=&quot;highlighter-rouge&quot;&gt;&amp;lt;Server&amp;gt;&amp;lt;/Server&amp;gt;&lt;/code&gt;标签内部，比如&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;&amp;lt;Server port=&quot;8005&quot; shutdown=&quot;SHUTDOWN&quot;&amp;gt;
+  &amp;lt;Listener className=&quot;org.apache.catalina.startup.VersionLoggerListener&quot; /&amp;gt;
+  &amp;lt;!-- Security listener. Documentation at /docs/config/listeners.html
+  &amp;lt;Listener className=&quot;org.apache.catalina.security.SecurityListener&quot; /&amp;gt;
+  --&amp;gt;
+  &amp;lt;!--APR library loader. Documentation at /docs/apr.html --&amp;gt;
+  &amp;lt;Listener className=&quot;org.apache.catalina.core.AprLifecycleListener&quot; SSLEngine=&quot;on&quot; /&amp;gt;
+  &amp;lt;!-- Prevent memory leaks due to use of particular java/javax APIs--&amp;gt;
+  &amp;lt;Listener className=&quot;org.apache.catalina.core.JreMemoryLeakPreventionListener&quot; /&amp;gt;
+  &amp;lt;Listener className=&quot;org.apache.catalina.mbeans.GlobalResourcesLifecycleListener&quot; /&amp;gt;
+  &amp;lt;Listener className=&quot;org.apache.catalina.core.ThreadLocalLeakPreventionListener&quot; /&amp;gt;
+ 
+  。。。。。。
+&amp;lt;/Server&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;定义的所有Listener都会出现在StandardServer的lifecycleListeners中，根据Listener定义的不同，有些Listener会传递到StandardServer的Child中去，比如ThreadLocalLeakPreventionListener会最终传递到Context中。&lt;/p&gt;
+
+&lt;p&gt;来看几个比较常用的Listener，&lt;/p&gt;
+
+&lt;h1 id=&quot;threadlocalleakpreventionlistener&quot;&gt;ThreadLocalLeakPreventionListener&lt;/h1&gt;
+&lt;p&gt;当Context停止的时候会调用到ThreadLocalLeakPreventionListener, 该Listener用于停止当前线程池中的所有线程，防止出现thread-local相关的内存泄漏。该Listener会调用stopIdleThreads方法，该方法内部会调用ThreadPoolExecutor的contextStopping方法停止所有线程。&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    public void contextStopping() {
+        this.lastContextStoppedTime.set(System.currentTimeMillis());
+
+        // save the current pool parameters to restore them later
+        int savedCorePoolSize = this.getCorePoolSize();
+        TaskQueue taskQueue =
+                getQueue() instanceof TaskQueue ? (TaskQueue) getQueue() : null;
+        if (taskQueue != null) {
+            // note by slaurent : quite oddly threadPoolExecutor.setCorePoolSize
+            // checks that queue.remainingCapacity()==0. I did not understand
+            // why, but to get the intended effect of waking up idle threads, I
+            // temporarily fake this condition.
+            taskQueue.setForcedRemainingCapacity(Integer.valueOf(0));
+        }
+
+        // setCorePoolSize(0) wakes idle threads
+        this.setCorePoolSize(0);
+
+        // TaskQueue.take() takes care of timing out, so that we are sure that
+        // all threads of the pool are renewed in a limited time, something like
+        // (threadKeepAlive + longest request time)
+
+        if (taskQueue != null) {
+            // ok, restore the state of the queue and pool
+            taskQueue.setForcedRemainingCapacity(null);
+        }
+        this.setCorePoolSize(savedCorePoolSize);
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;上面代码首先将taskQueue的remainingCapacity调整为0，然后将corePoolSize调整为0，设置lastContextStoppedTime为当前时间。taskQueue为0，corePoolSize为0表示新提交的任务将由新创建的worker来完成。老的worker在通过获取task(getTask())的时候会进入到TaskQueue的take方法，该方法会判断该线程的创建时间是否早于laskContextStoppedTime，如果早于则终止该线程。&lt;/p&gt;
+
+&lt;p&gt;处理完之后还需要恢复现场，这样保证其他Context的请求能够得到正常的处理。&lt;/p&gt;
+
+&lt;p&gt;这样做之所有能够防止内存泄漏是因为ThreadLocal内部的资源是跟Thread绑定到一起的，强制停止所有线程后，跟ThreadLocal相关的资源就可以被回收了。&lt;/p&gt;
+
+&lt;h1 id=&quot;engineconfig&quot;&gt;EngineConfig&lt;/h1&gt;
+
+&lt;p&gt;这个Listener一般由tomcat自动加载，不需要手工在server.xml中进行配置。该Listener位于StandardEngine中，目前只是用来打印相关启动日志&lt;/p&gt;
+
+&lt;h1 id=&quot;hostconfig&quot;&gt;HostConfig&lt;/h1&gt;
+&lt;p&gt;这个Listener一般由tomcat自动加载，不需要手工在server.xml中进行配置。该Listener位于StandardHost中，主要用来加载相关app(context)，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    /**
+     * Deploy applications for any directories or WAR files that are found
+     * in our &quot;application root&quot; directory.
+     */
+    protected void deployApps() {
+
+        File appBase = host.getAppBaseFile();
+        File configBase = host.getConfigBaseFile();
+        String[] filteredAppPaths = filterAppPaths(appBase.list());
+        // Deploy XML descriptors from configBase
+        deployDescriptors(configBase, configBase.list());
+        // Deploy WARs
+        deployWARs(appBase, filteredAppPaths);
+        // Deploy expanded folders
+        deployDirectories(appBase, filteredAppPaths);
+
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;h1 id=&quot;jrememoryleakpreventionlistener&quot;&gt;JreMemoryLeakPreventionListener&lt;/h1&gt;
+
+&lt;p&gt;由于在默认情况context的类加载由WebappClassLoader完成。而WebappClassLoader类加载的默认优先级是子优先，也就是先由自己加载，这是为了保证各个context之间引用不同的版本jar时互相之间不受影响。但是在某些情况下会导致在context被销毁的时候，WebappClassLoader及其加载的类无法被回收。这个Listener就是用来解决这个问题，某些类的加载在Listener中会被代理给SystemClassLoader。&lt;/p&gt;
+
+&lt;h1 id=&quot;globalresourceslifecyclelistener&quot;&gt;GlobalResourcesLifecycleListener&lt;/h1&gt;
+
+&lt;p&gt;用于创建全局的JNDI资源的Mbeans。&lt;/p&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;    protected void createMBeans(String prefix, Context context)
+        throws NamingException {
+
+        if (log.isDebugEnabled()) {
+            log.debug(&quot;Creating MBeans for Global JNDI Resources in Context '&quot; +
+                prefix + &quot;'&quot;);
+        }
+
+        try {
+            NamingEnumeration&amp;lt;Binding&amp;gt; bindings = context.listBindings(&quot;&quot;);
+            while (bindings.hasMore()) {
+                Binding binding = bindings.next();
+                String name = prefix + binding.getName();
+                Object value = context.lookup(binding.getName());
+                if (log.isDebugEnabled()) {
+                    log.debug(&quot;Checking resource &quot; + name);
+                }
+                if (value instanceof Context) {
+                    createMBeans(name + &quot;/&quot;, (Context) value);
+                } else if (value instanceof UserDatabase) {
+                    try {
+                        createMBeans(name, (UserDatabase) value);
+                    } catch (Exception e) {
+                        log.error(&quot;Exception creating UserDatabase MBeans for &quot; + name,
+                                e);
+                    }
+                }
+            }
+        } catch( RuntimeException ex) {
+            log.error(&quot;RuntimeException &quot; + ex);
+        } catch( OperationNotSupportedException ex) {
+            log.error(&quot;Operation not supported &quot; + ex);
+        }
+
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;如果在server.xml中配置了对应的GlobalNamingResources，上面的代码中的bindings就不为空。&lt;/p&gt;
+
+&lt;h1 id=&quot;versionloggerlistener&quot;&gt;VersionLoggerListener&lt;/h1&gt;
+
+&lt;p&gt;用于打印tomcat、操作系统以及jvm相关参数。&lt;/p&gt;
+
+&lt;h1 id=&quot;securitylistener&quot;&gt;SecurityListener&lt;/h1&gt;
+
+&lt;p&gt;权限相关校验，包括启动用户以及权限等。可以通过在server.xml的SecurityListener中配置checkedOsUsers来阻止某些用户启动tomcat&lt;/p&gt;
+
+&lt;h1 id=&quot;自定义listener&quot;&gt;自定义Listener&lt;/h1&gt;
+
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;package org.apache.catalina.core;
+
+import org.apache.catalina.*;
+import org.apache.juli.logging.Log;
+import org.apache.juli.logging.LogFactory;
+import org.apache.tomcat.util.res.StringManager;
+
+
+public class TestListener implements LifecycleListener,
+        ContainerListener {
+
+    private static final Log log =
+        LogFactory.getLog(TestListener.class);
+
+    private volatile boolean serverStopping = false;
+
+    protected static final StringManager sm =
+        StringManager.getManager(Constants.Package);
+
+    @Override
+    public void lifecycleEvent(LifecycleEvent event) {
+        try {
+            Lifecycle lifecycle = event.getLifecycle();
+            if (Lifecycle.AFTER_START_EVENT.equals(event.getType()) &amp;amp;&amp;amp;
+                    lifecycle instanceof Server) {
+                // when the server starts, we register ourself as listener for
+                // all context
+                // as well as container event listener so that we know when new
+                // Context are deployed
+                Server server = (Server) lifecycle;
+                registerListenersForServer(server);
+            }
+
+            if (Lifecycle.BEFORE_STOP_EVENT.equals(event.getType()) &amp;amp;&amp;amp;
+                    lifecycle instanceof Server) {
+                // Server is shutting down, so thread pools will be shut down so
+                // there is no need to clean the threads
+                serverStopping = true;
+            }
+
+            if (Lifecycle.AFTER_STOP_EVENT.equals(event.getType()) &amp;amp;&amp;amp;
+                    lifecycle instanceof Context) {
+                log.info(&quot;context &quot; + ((Context) lifecycle).getName() + &quot; stop&quot;);
+            }
+        } catch (Exception e) {
+            String msg =
+                sm.getString(
+                    &quot;TestListener.lifecycleEvent.error&quot;,
+                    event);
+            log.error(msg, e);
+        }
+    }
+
+    @Override
+    public void containerEvent(ContainerEvent event) {
+        try {
+            String type = event.getType();
+            if (Container.ADD_CHILD_EVENT.equals(type)) {
+                processContainerAddChild(event.getContainer(),
+                    (Container) event.getData());
+            } else if (Container.REMOVE_CHILD_EVENT.equals(type)) {
+                processContainerRemoveChild(event.getContainer(),
+                    (Container) event.getData());
+            }
+        } catch (Exception e) {
+            String msg =
+                sm.getString(
+                    &quot;TestListener.containerEvent.error&quot;,
+                    event);
+            log.error(msg, e);
+        }
+
+    }
+
+    private void registerListenersForServer(Server server) {
+        for (Service service : server.findServices()) {
+            Engine engine = service.getContainer();
+            engine.addContainerListener(this);
+            registerListenersForEngine(engine);
+        }
+
+    }
+
+    private void registerListenersForEngine(Engine engine) {
+        for (Container hostContainer : engine.findChildren()) {
+            Host host = (Host) hostContainer;
+            host.addContainerListener(this);
+            registerListenersForHost(host);
+        }
+    }
+
+    private void registerListenersForHost(Host host) {
+        for (Container contextContainer : host.findChildren()) {
+            Context context = (Context) contextContainer;
+            registerContextListener(context);
+        }
+    }
+
+    private void registerContextListener(Context context) {
+        context.addLifecycleListener(this);
+    }
+
+    protected void processContainerAddChild(Container parent, Container child) {
+        if (log.isDebugEnabled())
+            log.debug(&quot;Process addChild[parent=&quot; + parent + &quot;,child=&quot; + child +
+                &quot;]&quot;);
+
+        if (child instanceof Context) {
+            registerContextListener((Context) child);
+        } else if (child instanceof Engine) {
+            registerListenersForEngine((Engine) child);
+        } else if (child instanceof Host) {
+            registerListenersForHost((Host) child);
+        }
+
+    }
+
+    protected void processContainerRemoveChild(Container parent,
+        Container child) {
+
+        if (log.isDebugEnabled())
+            log.debug(&quot;Process removeChild[parent=&quot; + parent + &quot;,child=&quot; +
+                child + &quot;]&quot;);
+
+        if (child instanceof Context) {
+            Context context = (Context) child;
+            context.removeLifecycleListener(this);
+        } else if (child instanceof Host || child instanceof Engine) {
+            child.removeContainerListener(this);
+        }
+    }
+}
+
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+&lt;p&gt;上面的TestListener会作用于所有的Context，当Context被删除的时候打印相关日志。在server.xml中配置如下，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt; &amp;lt;Listener className=&quot;org.apache.catalina.core.TestListener&quot; /&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+&lt;p&gt;启动tomcat后删除一个context，日志会出现如下的数据，&lt;/p&gt;
+&lt;div class=&quot;highlighter-rouge&quot;&gt;&lt;pre class=&quot;highlight&quot;&gt;&lt;code&gt;信息: context /ROOT3 stop
+&lt;/code&gt;&lt;/pre&gt;
+&lt;/div&gt;
+
+</description>
+				<pubDate>Sun, 16 Jul 2017 00:00:00 +0800</pubDate>
+				<link>http://localhost:4000/jekyll-xixia/2017/07/16/tomcat%E7%B3%BB%E5%88%977-LifeCycleListener.html</link>
+				<guid isPermaLink="true">http://localhost:4000/jekyll-xixia/2017/07/16/tomcat%E7%B3%BB%E5%88%977-LifeCycleListener.html</guid>
+			</item>
+		
+	</channel>
+</rss>

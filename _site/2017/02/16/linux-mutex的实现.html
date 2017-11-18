@@ -1,0 +1,427 @@
+<h2 id="mutex的结构">mutex的结构</h2>
+<div class="highlighter-rouge"><pre class="highlight"><code>struct mutex {
+/* 1: unlocked, 0: locked, negative: locked, possible waiters */
+    atomic_t	 count;
+    spinlock_t	 wait_lock;
+    struct list_head	wait_list;
+#if defined(CONFIG_DEBUG_MUTEXES) || defined(CONFIG_MUTEX_SPIN_ON_OWNER)
+struct task_struct	*owner;
+#endif
+#ifdef CONFIG_MUTEX_SPIN_ON_OWNER
+struct optimistic_spin_queue osq; /* Spinner MCS lock */
+#endif
+#ifdef CONFIG_DEBUG_MUTEXES
+void	 *magic;
+#endif
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+struct lockdep_map	dep_map;
+#endif
+};
+</code></pre>
+</div>
+<ul>
+  <li>count
+用于计数，如果为1表示未加锁。0表示已经加锁。负数表示可能存在等待</li>
+  <li>wait_lock
+自旋锁，用于等待。</li>
+  <li>wait_list
+等待队列</li>
+</ul>
+
+<h2 id="mutex的加锁操作">mutex的加锁操作</h2>
+<p>mutex调用mutex_lock完成加锁操作。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>void __sched mutex_lock(struct mutex *lock)
+{
+might_sleep();
+/*
+* The locking fastpath is the 1-&gt;0 transition from
+* 'unlocked' into 'locked' state.
+*/
+    __mutex_fastpath_lock(&amp;lock-&gt;count, __mutex_lock_slowpath);
+    mutex_set_owner(lock);
+}
+</code></pre>
+</div>
+<p>在mutex_lock中先调用__mutex_fastpath_lock进行快加锁，如果加锁失败则调用__mutex_lock_slowpath进行慢加锁。这里先看一下快加锁的步骤，</p>
+
+<h3 id="__mutex_fastpath_lock">__mutex_fastpath_lock</h3>
+<div class="highlighter-rouge"><pre class="highlight"><code>
+static inline void
+__mutex_fastpath_lock(atomic_t *count, void (*fail_fn)(atomic_t *))
+{
+if (unlikely(atomic_dec_return_acquire(count) &lt; 0))
+fail_fn(count);
+}
+</code></pre>
+</div>
+<p>__mutex_fastpath_lock最终会调用atomic_dec_return完成count的操作。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>#define  atomic_dec_return_acquire	atomic_dec_return
+</code></pre>
+</div>
+<p>而这个函数是与体系结构相关的，不同的体系结构有不同的实现，下面的代码以x86结构为例，该函数位于<strong>arch/x86/include/asm/atomic.h</strong></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>/**
+ * atomic_add_return - add integer and return
+ * @i: integer value to add
+ * @v: pointer of type atomic_t
+ *
+ * Atomically adds @i to @v and returns @i + @v
+ */
+static __always_inline int atomic_add_return(int i, atomic_t *v)
+{
+    return i + xadd(&amp;v-&gt;counter, i);
+}
+/**
+ * atomic_sub_return - subtract integer and return
+ * @v: pointer of type atomic_t
+ * @i: integer value to subtract
+ *
+ * Atomically subtracts @i from @v and returns @v - @i
+ */
+static __always_inline int atomic_sub_return(int i, atomic_t *v)
+{
+    return atomic_add_return(-i, v);
+}
+
+#define atomic_inc_return(v)  (atomic_add_return(1, v))
+#define atomic_dec_return(v)  (atomic_sub_return(1, v))
+</code></pre>
+</div>
+<div class="highlighter-rouge"><pre class="highlight"><code>#define __xchg_op(ptr, arg, op, lock)	 \
+({	 \
+        __typeof__ (*(ptr)) __ret = (arg);	 \
+        switch (sizeof(*(ptr))) {	 \
+        case __X86_CASE_B:	 \
+        asm volatile (lock #op "b %b0, %1\n"	 \
+              : "+q" (__ret), "+m" (*(ptr))	\
+              : : "memory", "cc");	 \
+              break;	 \
+        case __X86_CASE_W:	 \
+        asm volatile (lock #op "w %w0, %1\n"	 \
+              : "+r" (__ret), "+m" (*(ptr))	\
+              : : "memory", "cc");	 \
+            break;	 \
+        case __X86_CASE_L:	 \
+        asm volatile (lock #op "l %0, %1\n"	 \
+              : "+r" (__ret), "+m" (*(ptr))	\
+              : : "memory", "cc");	 \
+        break;	 \
+        case __X86_CASE_Q:	 \
+        asm volatile (lock #op "q %q0, %1\n"	 \
+              : "+r" (__ret), "+m" (*(ptr))	\
+              : : "memory", "cc");	 \
+        break;	 \
+        default:	 \
+        __ ## op ## _wrong_size();	 \
+}	 \
+__ret;	 \
+})
+
+/*
+ * xadd() adds "inc" to "*ptr" and atomically returns the previous
+ * value of "*ptr".
+ *
+ * xadd() is locked when multiple CPUs are online
+ */
+#define __xadd(ptr, inc, lock)	__xchg_op((ptr), (inc), xadd, lock)
+#define xadd(ptr, inc)	 __xadd((ptr), (inc), LOCK_PREFIX)
+</code></pre>
+</div>
+<p>最终调用xadd命令完成操作。xadd命令的语义是(http://x86.renejeschke.de/html/file_module_x86_id_327.html):</p>
+<blockquote>
+
+  <p>Exchanges the first operand (destination operand) with the second operand (source operand), then loads the sum of the two values into the destination operand. The destination operand can be a register or a memory location; the source operand is a register.
+This instruction can be used with a LOCK prefix to allow the instruction to be executed atomically.</p>
+</blockquote>
+
+<p>用伪代码描述就是，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>Temporary = Source + Destination;
+Source = Destination;
+Destination = Temporary;
+</code></pre>
+</div>
+<p>回到上面的代码</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>asm volatile (lock #op "w %w0, %1\n"	 \
+      : "+r" (__ret), "+m" (*(ptr))	\
+      : : "memory", "cc"); 
+</code></pre>
+</div>
+<p>__ret对应的是-1，ptr对应的mutex-&gt;count。上面的代码执行后，__ret指向的值变为mutex-&gt; count, ptr指向的值变为mutex-&gt;count - 1，也就是说值递减了1。代码中的volatile保证指令的顺序，lock保证了操作的原子性。xadd “w %w0, %1”中的w表示将操作数转为2个字节宽，同理l表示4字节宽。为了验证这个结论我们可以写一个简单的例子，</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>#include&lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+main() {
+    int i=10,j=11;
+    asm("xadd %0, %1\n": "+q" (i), "+m" (j): : "memory", "cc");
+    printf("i=%d j=%d\n",i,j);
+}
+
+</code></pre>
+</div>
+<p>使用gcc编译上面的代码，并且使用gdb进行调试，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>gcc -g -o xadd xadd.c
+gdb xadd
+</code></pre>
+</div>
+<p>使用disas看代码与汇编的对应关系，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>(gdb) disas /m main
+Dump of assembler code for function main:
+3	main() {
+   0x0000000000400596 &lt;+0&gt;:	push   %rbp
+   0x0000000000400597 &lt;+1&gt;:	mov    %rsp,%rbp
+   0x000000000040059a &lt;+4&gt;:	sub    $0x10,%rsp
+   0x000000000040059e &lt;+8&gt;:	mov    %fs:0x28,%rax
+   0x00000000004005a7 &lt;+17&gt;:	mov    %rax,-0x8(%rbp)
+   0x00000000004005ab &lt;+21&gt;:	xor    %eax,%eax
+
+4	
+5	    int i=10,j=11;
+   0x00000000004005ad &lt;+23&gt;:	movl   $0xa,-0xc(%rbp)
+   0x00000000004005b4 &lt;+30&gt;:	movl   $0xb,-0x10(%rbp)
+
+6	
+7	    asm("xadd %0, %1\n": "+q" (i), "+m" (j): : "memory", "cc");
+   0x00000000004005bb &lt;+37&gt;:	mov    -0xc(%rbp),%eax
+   0x00000000004005be &lt;+40&gt;:	xadd   %eax,-0x10(%rbp)
+=&gt; 0x00000000004005c2 &lt;+44&gt;:	mov    %eax,-0xc(%rbp)
+
+8	
+9	    printf("i=%d j=%d\n",i,j);
+   0x00000000004005c5 &lt;+47&gt;:	mov    -0x10(%rbp),%edx
+   0x00000000004005c8 &lt;+50&gt;:	mov    -0xc(%rbp),%eax
+   0x00000000004005cb &lt;+53&gt;:	mov    %eax,%esi
+   0x00000000004005cd &lt;+55&gt;:	mov    $0x400684,%edi
+   0x00000000004005d2 &lt;+60&gt;:	mov    $0x0,%eax
+   0x00000000004005d7 &lt;+65&gt;:	callq  0x400470 &lt;printf@plt&gt;
+   0x00000000004005dc &lt;+70&gt;:	mov    $0x0,%eax
+
+10	}
+   0x00000000004005e1 &lt;+75&gt;:	mov    -0x8(%rbp),%rcx
+   0x00000000004005e5 &lt;+79&gt;:	xor    %fs:0x28,%rcx
+   0x00000000004005ee &lt;+88&gt;:	je     0x4005f5 &lt;main+95&gt;
+   0x00000000004005f0 &lt;+90&gt;:	callq  0x400460 &lt;__stack_chk_fail@plt&gt;
+   0x00000000004005f5 &lt;+95&gt;:	leaveq 
+   0x00000000004005f6 &lt;+96&gt;:	retq 
+</code></pre>
+</div>
+<p>asm(“xadd %0, %1\n”: “+q” (i), “+m” (j): : “memory”, “cc”); 这个调用被编译成了三条指令，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>   ## 赋值
+   0x00000000004005ad &lt;+23&gt;:	movl   $0xa,-0xc(%rbp)     %rbp - 0xc 中存放10(变量i)
+   0x00000000004005b4 &lt;+30&gt;:	movl   $0xb,-0x10(%rbp)   %rbp - 0x10中存放11(变量j)
+   ## 开始执行
+   0x00000000004005bb &lt;+37&gt;:	mov    -0xc(%rbp),%eax    %eax中存放10  第一个操作数  
+   0x00000000004005be &lt;+40&gt;:	xadd   %eax,-0x10(%rbp)  %eax存放11，%rbp - 0x10存放的21(变量j)
+   0x00000000004005c2 &lt;+44&gt;:	mov    %eax,-0xc(%rbp)    %rbp - 0xc 中存放的11(变量i)
+   ## 结束执行
+</code></pre>
+</div>
+<p>再回到__xchg_op函数，该函数最终返回的就是mutex-&gt;count的原始值。</p>
+
+<h3 id="__mutex_lock_slowpath">__mutex_lock_slowpath</h3>
+<p>__mutex_lock_slowpath最终会走入如下的代码，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>static __always_inline int __sched
+__mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
+		    struct lockdep_map *nest_lock, unsigned long ip,
+		    struct ww_acquire_ctx *ww_ctx, const bool use_ww_ctx)
+{
+	struct task_struct *task = current;
+	struct mutex_waiter waiter;
+	unsigned long flags;
+	int ret;
+
+	if (use_ww_ctx) {
+		struct ww_mutex *ww = container_of(lock, struct ww_mutex, base);
+		if (unlikely(ww_ctx == READ_ONCE(ww-&gt;ctx)))
+			return -EALREADY;
+	}
+
+	preempt_disable();
+	mutex_acquire_nest(&amp;lock-&gt;dep_map, subclass, 0, nest_lock, ip);
+
+	if (mutex_optimistic_spin(lock, ww_ctx, use_ww_ctx)) {
+		/* got the lock, yay! */
+		preempt_enable();
+		return 0;
+	}
+
+	spin_lock_mutex(&amp;lock-&gt;wait_lock, flags);
+
+	/*
+	 * Once more, try to acquire the lock. Only try-lock the mutex if
+	 * it is unlocked to reduce unnecessary xchg() operations.
+	 */
+	if (!mutex_is_locked(lock) &amp;&amp;
+	    (atomic_xchg_acquire(&amp;lock-&gt;count, 0) == 1))
+		goto skip_wait;
+
+	debug_mutex_lock_common(lock, &amp;waiter);
+	debug_mutex_add_waiter(lock, &amp;waiter, task);
+
+	/* add waiting tasks to the end of the waitqueue (FIFO): */
+	list_add_tail(&amp;waiter.list, &amp;lock-&gt;wait_list);
+	waiter.task = task;
+
+	lock_contended(&amp;lock-&gt;dep_map, ip);
+
+	for (;;) {
+		/*
+		 * Lets try to take the lock again - this is needed even if
+		 * we get here for the first time (shortly after failing to
+		 * acquire the lock), to make sure that we get a wakeup once
+		 * it's unlocked. Later on, if we sleep, this is the
+		 * operation that gives us the lock. We xchg it to -1, so
+		 * that when we release the lock, we properly wake up the
+		 * other waiters. We only attempt the xchg if the count is
+		 * non-negative in order to avoid unnecessary xchg operations:
+		 */
+		if (atomic_read(&amp;lock-&gt;count) &gt;= 0 &amp;&amp;
+		    (atomic_xchg_acquire(&amp;lock-&gt;count, -1) == 1))
+			break;
+
+		/*
+		 * got a signal? (This code gets eliminated in the
+		 * TASK_UNINTERRUPTIBLE case.)
+		 */
+		if (unlikely(signal_pending_state(state, task))) {
+			ret = -EINTR;
+			goto err;
+		}
+
+		if (use_ww_ctx &amp;&amp; ww_ctx-&gt;acquired &gt; 0) {
+			ret = __ww_mutex_lock_check_stamp(lock, ww_ctx);
+			if (ret)
+				goto err;
+		}
+
+		__set_task_state(task, state);
+
+		/* didn't get the lock, go to sleep: */
+		spin_unlock_mutex(&amp;lock-&gt;wait_lock, flags);
+		schedule_preempt_disabled();
+		spin_lock_mutex(&amp;lock-&gt;wait_lock, flags);
+	}
+	__set_task_state(task, TASK_RUNNING);
+
+	mutex_remove_waiter(lock, &amp;waiter, task);
+	/* set it to 0 if there are no waiters left: */
+	if (likely(list_empty(&amp;lock-&gt;wait_list)))
+		atomic_set(&amp;lock-&gt;count, 0);
+	debug_mutex_free_waiter(&amp;waiter);
+
+skip_wait:
+	/* got the lock - cleanup and rejoice! */
+	lock_acquired(&amp;lock-&gt;dep_map, ip);
+	mutex_set_owner(lock);
+
+	if (use_ww_ctx) {
+		struct ww_mutex *ww = container_of(lock, struct ww_mutex, base);
+		ww_mutex_set_context_slowpath(ww, ww_ctx);
+	}
+
+	spin_unlock_mutex(&amp;lock-&gt;wait_lock, flags);
+	preempt_enable();
+	return 0;
+
+err:
+	mutex_remove_waiter(lock, &amp;waiter, task);
+	spin_unlock_mutex(&amp;lock-&gt;wait_lock, flags);
+	debug_mutex_free_waiter(&amp;waiter);
+	mutex_release(&amp;lock-&gt;dep_map, 1, ip);
+	preempt_enable();
+	return ret;
+}
+</code></pre>
+</div>
+<p>上面这个函数主要分为几步，</p>
+
+<ul>
+  <li>优化的自旋锁
+mutex_optimistic_spin。如果当前锁的拥有者正在其他cpu处理器上运行，则自旋尝试获取锁。如果锁的拥有者不在cpu上运行了或者该进程需要让出cpu则跳出自旋。如果锁的拥有者让出锁了，则结束自旋，并且尝试获取锁，如果获取失败，则获取新的锁拥有者，进入到下一次的自旋。</li>
+</ul>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>static bool mutex_optimistic_spin(struct mutex *lock,
+				  struct ww_acquire_ctx *ww_ctx, const bool use_ww_ctx)
+{
+	while (true) {
+		struct task_struct *owner;
+		......
+                // 一次性获取当前锁的拥有者
+		owner = READ_ONCE(lock-&gt;owner);
+		if (owner &amp;&amp; !mutex_spin_on_owner(lock, owner))
+                        // 如果锁拥有者让出cpu或者当前进程需要被调度，则退出循环
+			break;
+
+		/* Try to acquire the mutex if it is unlocked. */
+                // 尝试获取锁
+		if (mutex_try_to_acquire(lock)) {
+			lock_acquired(&amp;lock-&gt;dep_map, ip);
+
+			if (use_ww_ctx) {
+				struct ww_mutex *ww;
+				ww = container_of(lock, struct ww_mutex, base);
+
+				ww_mutex_set_context_fastpath(ww, ww_ctx);
+			}
+
+			mutex_set_owner(lock);
+			osq_unlock(&amp;lock-&gt;osq);
+			return true;
+		}
+		......
+	}
+}
+
+static noinline
+bool mutex_spin_on_owner(struct mutex *lock, struct task_struct *owner)
+{
+	bool ret = true;
+
+	rcu_read_lock();
+	while (lock-&gt;owner == owner) {
+		/*
+		 * Ensure we emit the owner-&gt;on_cpu, dereference _after_
+		 * checking lock-&gt;owner still matches owner. If that fails,
+		 * owner might point to freed memory. If it still matches,
+		 * the rcu_read_lock() ensures the memory stays valid.
+		 */
+		barrier();
+ 
+                // 锁拥有者让出cpu或者当前进程需要被调度
+		if (!owner-&gt;on_cpu || need_resched()) {
+			ret = false;
+			break;
+		}
+
+		cpu_relax_lowlatency();
+	}
+	rcu_read_unlock();
+
+	return ret;
+}
+</code></pre>
+</div>
+
+<ul>
+  <li>使用spinlock获取自旋锁</li>
+  <li>再次尝试获取锁，获取成功后释放自旋锁。并且设置当前进程为锁的拥有者。
+    <div class="highlighter-rouge"><pre class="highlight"><code>if (!mutex_is_locked(lock) &amp;&amp;
+  (atomic_xchg_acquire(&amp;lock-&gt;count, 0) == 1))
+  goto skip_wait;
+</code></pre>
+    </div>
+  </li>
+  <li>添加到等待队列
+    <div class="highlighter-rouge"><pre class="highlight"><code>  list_add_tail(&amp;waiter.list, &amp;lock-&gt;wait_list);
+  waiter.task = task;
+</code></pre>
+    </div>
+  </li>
+  <li>进入到循环体中，如果发现锁被释放了则退出循环。如果没有获取锁，释放自旋锁，进入睡眠等待唤醒。如果唤醒了，则继续获取自旋锁。</li>
+  <li>跳出循环后，将该进程从等待队列中移除。
+    <div class="highlighter-rouge"><pre class="highlight"><code>  mutex_remove_waiter(lock, &amp;waiter, task);
+  /* set it to 0 if there are no waiters left: */
+  if (likely(list_empty(&amp;lock-&gt;wait_list)))
+      atomic_set(&amp;lock-&gt;count, 0);
+</code></pre>
+    </div>
+  </li>
+</ul>

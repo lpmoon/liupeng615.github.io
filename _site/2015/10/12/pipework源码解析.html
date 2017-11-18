@@ -1,0 +1,866 @@
+<p>最近在学习docker的相关东西。在看到docker的网络模型的时候，发现docker提供了较为丰富的网络配置用以满足不同的应用场景：</p>
+
+<ul>
+
+	<li>host模式，使用<code>--net=host</code>指定。</li>
+
+	<li>container模式，使用<code>--net=container:NAME_or_ID</code>指定。</li>
+
+	<li>none模式，使用<code>--net=none</code>指定。</li>
+
+	<li>bridge模式，使用<code>--net=bridge</code>指定，默认设置。</li>
+
+</ul>
+
+<p>使用host模式的话，这个docker实例的net namespace和宿主机一样，也就是说不是相互隔离的。各个容器不隔离也就带来了如下问题，一个端口只能使用1次，可扩展性比较差。而使用bridge模式就可以针对不同的docker实例设置不同的net namespace，它们之间的网络是相互隔离的，这也就为在同一台机器上部署两个相同的docker实例提供了可能 。</p>
+
+<p>docker自带的bridge模式比较简单。各个容器的ip地址是172.17.<em>.</em>，和默认网桥的ip(172.17.42.1)在同一网段。但是它们的ip和宿主机不在同一网段，也就是对外界通信的时候需要进行NAT转换，这样极不方便而且效率也不是很高。有什么解决方法呢？如果可以将各个docker实例的ip设置的和宿主机在同一网段，那么它们就可以直接进行通信了。有什么方法可以方便的做到这点呢？pipework就可以～～</p>
+
+<p>pipework的github地址如下：<a href="https://github.com/jpetazzo/pipework">https://github.com/jpetazzo/pipework</a></p>
+
+<p>里面有很详尽的使用说明例子，并且网上也有不少，这里就不在多说了。下面主要分析下pipework的源码，目的主要是学习一下linux网络相关的知识，更好的理解docker模型，同时也是为了熟悉下shell脚本的基本用法。</p>
+
+<p>下面只针对linux + 网桥 + 静态ip分配做了注解，其他的一些功能由于暂时还没有用到所以这里就先不说明了。</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+<span class="c">#!/bin/sh</span>
+
+<span class="c"># This code should (try to) follow Google's Shell Style Guide</span>
+
+<span class="c"># (https://google-styleguide.googlecode.com/svn/trunk/shell.xml)</span>
+
+
+
+<span class="c">### 当bash脚本执行出现错误的时候立刻退出脚本。</span>
+
+<span class="c">### help set中可以看到：-e  Exit immediately if a command exits with a non-zero status.</span>
+
+<span class="nb">set</span> -e
+
+
+
+<span class="c">### $1获得第一个参数，如果参数等于--wait，则设置WAIT为1</span>
+
+<span class="c">### It will wait until the eth1 interface is present and in UP operational state, then exit gracefully.</span>
+
+<span class="c">### 该命令推荐在container内部使用</span>
+
+<span class="k">case</span> <span class="s2">"</span><span class="nv">$1</span><span class="s2">"</span> <span class="k">in</span>
+
+  --wait<span class="p">)</span>
+
+    <span class="nv">WAIT</span><span class="o">=</span>1
+
+    <span class="p">;;</span>
+
+<span class="k">esac</span>
+
+
+
+<span class="c">### IFNAME设置为第一个参数</span>
+
+<span class="nv">IFNAME</span><span class="o">=</span><span class="nv">$1</span>
+
+
+
+<span class="c">### 设置CONTAINER_IFNAME的值</span>
+
+<span class="c"># default value set further down if not set here</span>
+
+<span class="nv">CONTAINER_IFNAME</span><span class="o">=</span>
+
+<span class="k">if</span> <span class="o">[</span> <span class="s2">"</span><span class="nv">$2</span><span class="s2">"</span> <span class="o">=</span> <span class="s2">"-i"</span> <span class="o">]</span>; <span class="k">then
+
+  </span><span class="nv">CONTAINER_IFNAME</span><span class="o">=</span><span class="nv">$3</span>
+
+  <span class="c">### shift代表参数左移2位，也就是参数从1,2,3...变为3,...</span>
+
+  <span class="nb">shift </span>2
+
+<span class="k">fi
+
+
+
+if</span> <span class="o">[</span> <span class="s2">"</span><span class="nv">$2</span><span class="s2">"</span> <span class="o">=</span> <span class="s2">"-l"</span> <span class="o">]</span>; <span class="k">then
+
+  </span><span class="nv">LOCAL_IFNAME</span><span class="o">=</span><span class="nv">$3</span>
+
+  <span class="nb">shift </span>2
+
+<span class="k">fi</span>
+
+
+
+<span class="c">### 获得CONTAINER的名称，IP地址，mac地址</span>
+
+<span class="nv">GUESTNAME</span><span class="o">=</span><span class="nv">$2</span>
+
+<span class="nv">IPADDR</span><span class="o">=</span><span class="nv">$3</span>
+
+<span class="nv">MACADDR</span><span class="o">=</span><span class="nv">$4</span>
+
+
+
+<span class="c">### 当MAC地址满足*@*的时候，对VLAN和MACADDR进行赋值</span>
+
+<span class="k">case</span> <span class="s2">"</span><span class="nv">$MACADDR</span><span class="s2">"</span> <span class="k">in</span>
+
+  <span class="k">*</span>@<span class="k">*</span><span class="p">)</span>
+
+    <span class="nv">VLAN</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">MACADDR</span><span class="p">#*@</span><span class="k">}</span><span class="s2">"</span>
+
+    <span class="nv">VLAN</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">VLAN</span><span class="p">%%@*</span><span class="k">}</span><span class="s2">"</span>
+
+    <span class="nv">MACADDR</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">MACADDR</span><span class="p">%%@*</span><span class="k">}</span><span class="s2">"</span>
+
+    <span class="p">;;</span>
+
+  <span class="k">*</span><span class="p">)</span>
+
+    <span class="nv">VLAN</span><span class="o">=</span>
+
+    <span class="p">;;</span>
+
+<span class="k">esac</span>
+
+
+
+<span class="c">### 当IP地址为空或者WAIT为空的时候格式错误</span>
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$IPADDR</span><span class="s2">"</span> <span class="o">]</span> <span class="o">||</span> <span class="o">[</span> <span class="s2">"</span><span class="nv">$WAIT</span><span class="s2">"</span> <span class="o">]</span> <span class="o">||</span> <span class="o">{</span>
+
+  <span class="nb">echo</span> <span class="s2">"Syntax:"</span>
+
+  <span class="nb">echo</span> <span class="s2">"pipework &amp;lt;hostinterface&amp;gt; [-i containerinterface] [-l localinterfacename] &amp;lt;guest&amp;gt; &amp;lt;ipaddr&amp;gt;/&amp;lt;subnet&amp;gt;[@default_gateway] [macaddr][@vlan]"</span>
+
+  <span class="nb">echo</span> <span class="s2">"pipework &amp;lt;hostinterface&amp;gt; [-i containerinterface] [-l localinterfacename] &amp;lt;guest&amp;gt; dhcp [macaddr][@vlan]"</span>
+
+  <span class="nb">echo</span> <span class="s2">"pipework --wait [-i containerinterface]"</span>
+
+  <span class="nb">exit </span>1
+
+<span class="o">}</span>
+
+
+
+<span class="c"># Succeed if the given utility is installed. Fail otherwise.</span>
+
+<span class="c"># For explanations about `which` vs `type` vs `command`, see:</span>
+
+<span class="c"># http://stackoverflow.com/questions/592620/check-if-a-program-exists-from-a-bash-script/677212#677212</span>
+
+<span class="c"># (Thanks to @chenhanxiao for pointing this out!)</span>
+
+
+
+<span class="c">### &amp;gt;/dev/null 2&amp;gt;&amp;amp;1用于输出重定向</span>
+
+<span class="c">### http://stackoverflow.com/questions/10508843/what-is-dev-null-21</span>
+
+
+
+installed <span class="o">()</span> <span class="o">{</span>
+
+  <span class="nb">command</span> -v <span class="s2">"</span><span class="nv">$1</span><span class="s2">"</span> &amp;gt;/dev/null 2&amp;gt;&amp;amp;1
+
+<span class="o">}</span>
+
+
+
+<span class="c"># Google Styleguide says error messages should go to standard error.</span>
+
+warn <span class="o">()</span> <span class="o">{</span>
+
+  <span class="nb">echo</span> <span class="s2">"</span><span class="nv">$@</span><span class="s2">"</span> &amp;gt;&amp;amp;2
+
+<span class="o">}</span>
+
+die <span class="o">()</span> <span class="o">{</span>
+
+  <span class="nv">status</span><span class="o">=</span><span class="s2">"</span><span class="nv">$1</span><span class="s2">"</span>
+
+  <span class="nb">shift
+
+  </span>warn <span class="s2">"</span><span class="nv">$@</span><span class="s2">"</span>
+
+  <span class="nb">exit</span> <span class="s2">"</span><span class="nv">$status</span><span class="s2">"</span>
+
+<span class="o">}</span>
+
+
+
+<span class="c"># First step: determine type of first argument (bridge, physical interface...),</span>
+
+<span class="c"># Unless "--wait" is set (then skip the whole section)</span>
+
+
+
+<span class="c">### WAIT没有值的时候</span>
+
+<span class="k">if</span> <span class="o">[</span> -z <span class="s2">"</span><span class="nv">$WAIT</span><span class="s2">"</span> <span class="o">]</span>; <span class="k">then
+
+  if</span> <span class="o">[</span> -d <span class="s2">"/sys/class/net/</span><span class="nv">$IFNAME</span><span class="s2">"</span> <span class="o">]</span> <span class="c">### 判断网桥对应的目录存不存在</span>
+
+  <span class="k">then
+
+    if</span> <span class="o">[</span> -d <span class="s2">"/sys/class/net/</span><span class="nv">$IFNAME</span><span class="s2">/bridge"</span> <span class="o">]</span>; <span class="k">then</span> <span class="c">###bridge存在</span>
+
+      <span class="nv">IFTYPE</span><span class="o">=</span>bridge
+
+      <span class="nv">BRTYPE</span><span class="o">=</span>linux
+
+    <span class="k">elif </span>installed ovs-vsctl &amp;amp;&amp;amp; ovs-vsctl list-br|grep -q <span class="s2">"^</span><span class="k">${</span><span class="nv">IFNAME</span><span class="k">}</span><span class="s2">$"</span>; <span class="k">then</span> <span class="c">###当ovs_vsctl存在并且能够找到对应的网桥的时候</span>
+
+      <span class="nv">IFTYPE</span><span class="o">=</span>bridge
+
+      <span class="nv">BRTYPE</span><span class="o">=</span>openvswitch
+
+    <span class="k">elif</span> <span class="o">[</span> <span class="s2">"</span><span class="k">$(</span>cat <span class="s2">"/sys/class/net/</span><span class="nv">$IFNAME</span><span class="s2">/type"</span><span class="k">)</span><span class="s2">"</span> -eq 32 <span class="o">]</span>; <span class="k">then</span> <span class="c"># InfiniBand IPoIB interface type 32</span>
+
+      <span class="nv">IFTYPE</span><span class="o">=</span>ipoib
+
+      <span class="c"># The IPoIB kernel module is fussy, set device name to ib0 if not overridden</span>
+
+      <span class="nv">CONTAINER_IFNAME</span><span class="o">=</span><span class="k">${</span><span class="nv">CONTAINER_IFNAME</span><span class="k">:-</span><span class="nv">ib0</span><span class="k">}</span>
+
+      <span class="nv">PKEY</span><span class="o">=</span><span class="nv">$VLAN</span>
+
+    <span class="k">else </span><span class="nv">IFTYPE</span><span class="o">=</span>phys
+
+    <span class="k">fi
+
+  else</span> <span class="c">###网桥不存在，判断输入的网桥的名称如果是以br开通偶的则设置对应的BRTYPE为linux；否则判断是否安装了ovs-vsctl</span>
+
+    <span class="k">case</span> <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> <span class="k">in
+
+      </span>br<span class="k">*</span><span class="p">)</span>
+
+        <span class="nv">IFTYPE</span><span class="o">=</span>bridge
+
+        <span class="nv">BRTYPE</span><span class="o">=</span>linux
+
+        <span class="p">;;</span>
+
+      ovs<span class="k">*</span><span class="p">)</span>
+
+        <span class="k">if</span> ! installed ovs-vsctl; <span class="k">then
+
+          </span>die 1 <span class="s2">"Need OVS installed on the system to create an ovs bridge"</span>
+
+        <span class="k">fi
+
+        </span><span class="nv">IFTYPE</span><span class="o">=</span>bridge
+
+        <span class="nv">BRTYPE</span><span class="o">=</span>openvswitch
+
+        <span class="p">;;</span>
+
+      <span class="k">*</span><span class="p">)</span> die 1 <span class="s2">"I do not know how to setup interface </span><span class="nv">$IFNAME</span><span class="s2">."</span> <span class="p">;;</span>
+
+    <span class="k">esac</span>
+
+  <span class="k">fi
+
+fi</span>
+
+
+
+<span class="c"># Set the default container interface name to eth1 if not already set</span>
+
+<span class="nv">CONTAINER_IFNAME</span><span class="o">=</span><span class="k">${</span><span class="nv">CONTAINER_IFNAME</span><span class="k">:-</span><span class="nv">eth1</span><span class="k">}</span>
+
+
+
+<span class="c">### 当使用了--WAIT参数的时候，该脚本会虚线的循环下去 直到对应的设备创建成功</span>
+
+<span class="c">### 才会退出循环</span>
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$WAIT</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+  <span class="k">while </span><span class="nb">true</span>; <span class="k">do</span>
+
+    <span class="c"># This first method works even without `ip` or `ifconfig` installed,</span>
+
+    <span class="c"># but doesn't work on older kernels (e.g. CentOS 6.X). See #128.</span>
+
+    grep -q <span class="s1">'^1$'</span> <span class="s2">"/sys/class/net/</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">/carrier"</span> &amp;amp;&amp;amp; <span class="nb">break</span>
+
+    <span class="c"># This method hopefully works on those older kernels.</span>
+
+    ip link ls dev <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span> &amp;amp;&amp;amp; <span class="nb">break
+
+    </span>sleep 1
+
+  <span class="k">done</span> &amp;gt; /dev/null 2&amp;gt;&amp;amp;1 <span class="c">###后台运行</span>
+
+  <span class="nb">exit </span>0
+
+<span class="o">}</span>
+
+
+
+<span class="c">### 几种不支持的类型</span>
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$IFTYPE</span><span class="s2">"</span> <span class="o">=</span> bridge <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">[</span> <span class="s2">"</span><span class="nv">$BRTYPE</span><span class="s2">"</span> <span class="o">=</span> linux <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">[</span> <span class="s2">"</span><span class="nv">$VLAN</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+  die 1 <span class="s2">"VLAN configuration currently unsupported for Linux bridge."</span>
+
+<span class="o">}</span>
+
+
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$IFTYPE</span><span class="s2">"</span> <span class="o">=</span> ipoib <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">[</span> <span class="s2">"</span><span class="nv">$MACADDR</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+  die 1 <span class="s2">"MACADDR configuration unsupported for IPoIB interfaces."</span>
+
+<span class="o">}</span>
+
+
+
+<span class="c"># Second step: find the guest (for now, we only support LXC containers)</span>
+
+<span class="k">while </span><span class="nb">read </span>_ mnt fstype options _; <span class="k">do</span>
+
+  <span class="o">[</span> <span class="s2">"</span><span class="nv">$fstype</span><span class="s2">"</span> !<span class="o">=</span> <span class="s2">"cgroup"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="k">continue
+
+  </span><span class="nb">echo</span> <span class="s2">"</span><span class="nv">$options</span><span class="s2">"</span> | grep -qw devices <span class="o">||</span> <span class="k">continue
+
+  </span><span class="nv">CGROUPMNT</span><span class="o">=</span><span class="nv">$mnt</span>
+
+<span class="k">done</span> &amp;lt; /proc/mounts
+
+
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$CGROUPMNT</span><span class="s2">"</span> <span class="o">]</span> <span class="o">||</span> <span class="o">{</span>
+
+    die 1 <span class="s2">"Could not locate cgroup mount point."</span>
+
+<span class="o">}</span>
+
+
+
+<span class="c"># Try to find a cgroup matching exactly the provided name.</span>
+
+<span class="nv">N</span><span class="o">=</span><span class="k">$(</span>find <span class="s2">"</span><span class="nv">$CGROUPMNT</span><span class="s2">"</span> -name <span class="s2">"</span><span class="nv">$GUESTNAME</span><span class="s2">"</span> | wc -l<span class="k">)</span>
+
+<span class="k">case</span> <span class="s2">"</span><span class="nv">$N</span><span class="s2">"</span> <span class="k">in
+
+  </span>0<span class="p">)</span>
+
+    <span class="c"># If we didn't find anything, try to lookup the container with Docker.</span>
+
+    <span class="k">if </span>installed docker; <span class="k">then
+
+      </span><span class="nv">RETRIES</span><span class="o">=</span>3
+
+      <span class="k">while</span> <span class="o">[</span> <span class="s2">"</span><span class="nv">$RETRIES</span><span class="s2">"</span> -gt 0 <span class="o">]</span>; <span class="k">do</span>
+
+        <span class="c">### 检查对应的容器是否启动成功</span>
+
+        <span class="nv">DOCKERPID</span><span class="o">=</span><span class="k">$(</span>docker inspect --format<span class="o">=</span><span class="s1">''</span> <span class="s2">"</span><span class="nv">$GUESTNAME</span><span class="s2">"</span><span class="k">)</span>
+
+        <span class="o">[</span> <span class="s2">"</span><span class="nv">$DOCKERPID</span><span class="s2">"</span> !<span class="o">=</span> 0 <span class="o">]</span> &amp;amp;&amp;amp; <span class="nb">break
+
+        </span>sleep 1
+
+        <span class="nv">RETRIES</span><span class="o">=</span><span class="k">$((</span>RETRIES <span class="o">-</span> <span class="m">1</span><span class="k">))</span>
+
+      <span class="k">done</span>
+
+
+
+      <span class="o">[</span> <span class="s2">"</span><span class="nv">$DOCKERPID</span><span class="s2">"</span> <span class="o">=</span> 0 <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+        die 1 <span class="s2">"Docker inspect returned invalid PID 0"</span>
+
+      <span class="o">}</span>
+
+
+
+      <span class="o">[</span> <span class="s2">"</span><span class="nv">$DOCKERPID</span><span class="s2">"</span> <span class="o">=</span> <span class="s2">"&amp;lt;no value&amp;gt;"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+        die 1 <span class="s2">"Container </span><span class="nv">$GUESTNAME</span><span class="s2"> not found, and unknown to Docker."</span>
+
+      <span class="o">}</span>
+
+    <span class="k">else
+
+      </span>die 1 <span class="s2">"Container </span><span class="nv">$GUESTNAME</span><span class="s2"> not found, and Docker not installed."</span>
+
+    <span class="k">fi</span>
+
+    <span class="p">;;</span>
+
+  1<span class="p">)</span> <span class="nb">true</span> <span class="p">;;</span>
+
+  <span class="k">*</span><span class="p">)</span> die 1 <span class="s2">"Found more than one container matching </span><span class="nv">$GUESTNAME</span><span class="s2">."</span> <span class="p">;;</span>
+
+<span class="k">esac</span>
+
+
+
+<span class="c">### 判断所需要分配给container的ip地址是dhcp还是static</span>
+
+<span class="k">case</span> <span class="s2">"</span><span class="nv">$IPADDR</span><span class="s2">"</span> <span class="k">in</span>
+
+  <span class="c"># Let's check first if the user asked for DHCP allocation.</span>
+
+  dhcp|dhcp:<span class="k">*</span><span class="p">)</span>
+
+    <span class="c"># Use Docker-specific strategy to run the DHCP client</span>
+
+    <span class="c"># from the busybox image, in the network namespace of</span>
+
+    <span class="c"># the container.</span>
+
+    <span class="k">if</span> ! <span class="o">[</span> <span class="s2">"</span><span class="nv">$DOCKERPID</span><span class="s2">"</span> <span class="o">]</span>; <span class="k">then
+
+      </span>warn <span class="s2">"You asked for a Docker-specific DHCP method."</span>
+
+      warn <span class="s2">"However, </span><span class="nv">$GUESTNAME</span><span class="s2"> doesn't seem to be a Docker container."</span>
+
+      warn <span class="s2">"Try to replace 'dhcp' with another option?"</span>
+
+      die 1 <span class="s2">"Aborting."</span>
+
+    <span class="k">fi
+
+    </span><span class="nv">DHCP_CLIENT</span><span class="o">=</span><span class="k">${</span><span class="nv">IPADDR</span><span class="p">%%</span>:<span class="p">*</span><span class="k">}</span>
+
+    <span class="p">;;</span>
+
+  udhcpc|udhcpc:<span class="k">*</span><span class="p">|</span>dhcpcd|dhcpcd:<span class="k">*</span><span class="p">|</span>dhclient|dhclient:<span class="k">*</span><span class="p">)</span>
+
+    <span class="nv">DHCP_CLIENT</span><span class="o">=</span><span class="k">${</span><span class="nv">IPADDR</span><span class="p">%%</span>:<span class="p">*</span><span class="k">}</span>
+
+    <span class="k">if</span> ! installed <span class="s2">"</span><span class="nv">$DHCP_CLIENT</span><span class="s2">"</span>; <span class="k">then
+
+      </span>die 1 <span class="s2">"You asked for DHCP client </span><span class="nv">$DHCP_CLIENT</span><span class="s2">, but I can't find it."</span>
+
+    <span class="k">fi</span>
+
+    <span class="p">;;</span>
+
+  <span class="c"># Alright, no DHCP? Then let's see if we have a subnet *and* gateway.</span>
+
+  <span class="c">### 设置的静态ip地址，并且设置了默认网关</span>
+
+  <span class="k">*</span>/<span class="k">*</span>@<span class="k">*</span><span class="p">)</span>
+
+    <span class="c">### ${string#substring}    从变量$string的开头, 删除最短匹配$substring的子串</span>
+
+    <span class="c">### ${string##substring}   从变量$string的开头, 删除最长匹配$substring的子串</span>
+
+    <span class="c">### ${string%substring}    从变量$string的结尾, 删除最短匹配$substring的子串</span>
+
+    <span class="c">### ${string%%substring}   从变量$string的结尾, 删除最长匹配$substring的子串</span>
+
+    <span class="nv">GATEWAY</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">IPADDR</span><span class="p">#*@</span><span class="k">}</span><span class="s2">"</span> <span class="nv">GATEWAY</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">GATEWAY</span><span class="p">%%@*</span><span class="k">}</span><span class="s2">"</span>
+
+    <span class="nv">IPADDR</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">IPADDR</span><span class="p">%%@*</span><span class="k">}</span><span class="s2">"</span>
+
+    <span class="p">;;</span>
+
+  <span class="c"># No gateway? We need at least a subnet, anyway!</span>
+
+  <span class="k">*</span>/<span class="k">*</span><span class="p">)</span> : <span class="p">;;</span>
+
+  <span class="c"># ... No? Then stop right here.</span>
+
+  <span class="k">*</span><span class="p">)</span>
+
+    warn <span class="s2">"The IP address should include a netmask."</span>
+
+    die 1 <span class="s2">"Maybe you meant </span><span class="nv">$IPADDR</span><span class="s2">/24 ?"</span>
+
+    <span class="p">;;</span>
+
+<span class="k">esac</span>
+
+
+
+<span class="c">### 如果是DHCP</span>
+
+<span class="c"># If a DHCP method was specified, extract the DHCP options.</span>
+
+<span class="k">if</span> <span class="o">[</span> <span class="s2">"</span><span class="nv">$DHCP_CLIENT</span><span class="s2">"</span> <span class="o">]</span>; <span class="k">then
+
+  case</span> <span class="s2">"</span><span class="nv">$IPADDR</span><span class="s2">"</span> <span class="k">in</span>
+
+    <span class="k">*</span>:<span class="k">*</span><span class="p">)</span> <span class="nv">DHCP_OPTIONS</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">IPADDR</span><span class="p">#*</span>:<span class="k">}</span><span class="s2">"</span> <span class="p">;;</span>
+
+  <span class="k">esac</span>
+
+<span class="k">fi
+
+
+
+</span><span class="nb">echo </span>cgroupmnt <span class="nv">$CGROUPMNT</span>
+
+<span class="nb">echo </span>guestname <span class="nv">$GUESTNAME</span>
+
+
+
+<span class="k">if</span> <span class="o">[</span> <span class="s2">"</span><span class="nv">$DOCKERPID</span><span class="s2">"</span> <span class="o">]</span>; <span class="k">then
+
+  </span><span class="nv">NSPID</span><span class="o">=</span><span class="nv">$DOCKERPID</span>
+
+<span class="k">else</span>
+
+  <span class="c">### find /sys/fs/cgroup/devices/ -name "xxxx"</span>
+
+  <span class="c">### lxc-info -n "xxxx"</span>
+
+  <span class="c">### 上面两种方法都是为了能够找到容器中的一个进程，方便获取net namespace用于网桥以及veth等操作</span>
+
+  <span class="nv">NSPID</span><span class="o">=</span><span class="k">$(</span>head -n 1 <span class="s2">"</span><span class="k">$(</span>find <span class="s2">"</span><span class="nv">$CGROUPMNT</span><span class="s2">"</span> -name <span class="s2">"</span><span class="nv">$GUESTNAME</span><span class="s2">"</span> | head -n 1<span class="k">)</span><span class="s2">/tasks"</span><span class="k">)</span>
+
+  <span class="o">[</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> <span class="o">]</span> <span class="o">||</span> <span class="o">{</span>
+
+    <span class="c"># it is an alternative way to get the pid</span>
+
+    <span class="nv">NSPID</span><span class="o">=</span><span class="k">$(</span>lxc-info -n  <span class="s2">"</span><span class="nv">$GUESTNAME</span><span class="s2">"</span> | grep PID | grep -Eo <span class="s1">'[0-9]+'</span><span class="k">)</span>
+
+    <span class="o">[</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> <span class="o">]</span> <span class="o">||</span> <span class="o">{</span>
+
+      die 1 <span class="s2">"Could not find a process inside container </span><span class="nv">$GUESTNAME</span><span class="s2">."</span>
+
+    <span class="o">}</span>
+
+  <span class="o">}</span>
+
+<span class="k">fi</span>
+
+
+
+<span class="c"># Check if an incompatible VLAN device already exists</span>
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$IFTYPE</span><span class="s2">"</span> <span class="o">=</span> phys <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">[</span> <span class="s2">"</span><span class="nv">$VLAN</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">[</span> -d <span class="s2">"/sys/class/net/</span><span class="nv">$IFNAME</span><span class="s2">.VLAN"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+  ip -d link show <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">.</span><span class="nv">$VLAN</span><span class="s2">"</span> | grep -q <span class="s2">"vlan.*id </span><span class="nv">$VLAN</span><span class="s2">"</span> <span class="o">||</span> <span class="o">{</span>
+
+    die 1 <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">.VLAN already exists but is not a VLAN device for tag </span><span class="nv">$VLAN</span><span class="s2">"</span>
+
+  <span class="o">}</span>
+
+<span class="o">}</span>
+
+
+
+<span class="o">[</span> ! -d /var/run/netns <span class="o">]</span> &amp;amp;&amp;amp; mkdir -p /var/run/netns
+
+rm -f <span class="s2">"/var/run/netns/</span><span class="nv">$NSPID</span><span class="s2">"</span>
+
+ln -s <span class="s2">"/proc/</span><span class="nv">$NSPID</span><span class="s2">/ns/net"</span> <span class="s2">"/var/run/netns/</span><span class="nv">$NSPID</span><span class="s2">"</span>
+
+
+
+<span class="c"># Check if we need to create a bridge.</span>
+
+
+
+<span class="c">### 检查网桥是否存在，如果不存在则创建</span>
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$IFTYPE</span><span class="s2">"</span> <span class="o">=</span> bridge <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">[</span> ! -d <span class="s2">"/sys/class/net/</span><span class="nv">$IFNAME</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+  <span class="o">[</span> <span class="s2">"</span><span class="nv">$BRTYPE</span><span class="s2">"</span> <span class="o">=</span> linux <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+    <span class="c">### 创建网桥有两种方法</span>
+
+    <span class="c">### 方法1：ip link add dev **** type bridge</span>
+
+    <span class="c">### 方法2: brctl addbr ****</span>
+
+    <span class="o">(</span>ip link add dev <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> <span class="nb">type </span>bridge &amp;gt; /dev/null 2&amp;gt;&amp;amp;1<span class="o">)</span> <span class="o">||</span> <span class="o">(</span>brctl addbr <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span><span class="o">)</span>
+
+    ip link <span class="nb">set</span> <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> up
+
+  <span class="o">}</span>
+
+  <span class="o">[</span> <span class="s2">"</span><span class="nv">$BRTYPE</span><span class="s2">"</span> <span class="o">=</span> openvswitch <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+    ovs-vsctl add-br <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span>
+
+  <span class="o">}</span>
+
+<span class="o">}</span>
+
+
+
+<span class="c">### 获取MTU(Maximum transmission unit) https://en.wikipedia.org/wiki/Maximum_transmission_unit</span>
+
+<span class="nv">MTU</span><span class="o">=</span><span class="k">$(</span>ip link show <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> | awk <span class="s1">'{print $5}'</span><span class="k">)</span>
+
+<span class="c"># If it's a bridge, we need to create a veth pair</span>
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$IFTYPE</span><span class="s2">"</span> <span class="o">=</span> bridge <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+  <span class="k">if</span> <span class="o">[</span> -z <span class="s2">"</span><span class="nv">$LOCAL_IFNAME</span><span class="s2">"</span> <span class="o">]</span>; <span class="k">then</span>
+
+    <span class="c">### 如果LOCAL_IFNAME为空，则按照如下规则给LOCAL_IFNAME进行赋值；如果CONTAINER_IFNAME没有指定的话</span>
+
+    <span class="c">### 则使用eth1，那么LOCAL_IFNAME形如veth1plxxxxx</span>
+
+    <span class="nv">LOCAL_IFNAME</span><span class="o">=</span><span class="s2">"v</span><span class="k">${</span><span class="nv">CONTAINER_IFNAME</span><span class="k">}</span><span class="s2">pl</span><span class="k">${</span><span class="nv">NSPID</span><span class="k">}</span><span class="s2">"</span>
+
+  <span class="k">fi</span>
+
+  <span class="c">### GUEST_IFNAME也是如此，不同的是local是pl，guest是pg</span>
+
+  <span class="nv">GUEST_IFNAME</span><span class="o">=</span><span class="s2">"v</span><span class="k">${</span><span class="nv">CONTAINER_IFNAME</span><span class="k">}</span><span class="s2">pg</span><span class="k">${</span><span class="nv">NSPID</span><span class="k">}</span><span class="s2">"</span>
+
+  <span class="c"># Does the link already exist?</span>
+
+  <span class="k">if </span>ip link show <span class="s2">"</span><span class="nv">$LOCAL_IFNAME</span><span class="s2">"</span> &amp;gt;/dev/null 2&amp;gt;&amp;amp;1; <span class="k">then</span>
+
+    <span class="c"># link exists, is it in use?</span>
+
+    <span class="k">if </span>ip link show <span class="s2">"</span><span class="nv">$LOCAL_IFNAME</span><span class="s2">"</span> up | grep -q <span class="s2">"UP"</span>; <span class="k">then
+
+      </span><span class="nb">echo</span> <span class="s2">"Link </span><span class="nv">$LOCAL_IFNAME</span><span class="s2"> exists and is up"</span>
+
+      <span class="nb">exit </span>1
+
+    <span class="k">fi</span>
+
+    <span class="c"># delete the link so we can re-add it afterwards</span>
+
+    ip link del <span class="s2">"</span><span class="nv">$LOCAL_IFNAME</span><span class="s2">"</span>
+
+  <span class="k">fi</span>
+
+  <span class="c">### 添加VETH设备，名称为LOCAL_IFNAME</span>
+
+  ip link add name <span class="s2">"</span><span class="nv">$LOCAL_IFNAME</span><span class="s2">"</span> mtu <span class="s2">"</span><span class="nv">$MTU</span><span class="s2">"</span> <span class="nb">type </span>veth peer name <span class="s2">"</span><span class="nv">$GUEST_IFNAME</span><span class="s2">"</span> mtu <span class="s2">"</span><span class="nv">$MTU</span><span class="s2">"</span>
+
+  <span class="k">case</span> <span class="s2">"</span><span class="nv">$BRTYPE</span><span class="s2">"</span> <span class="k">in
+
+    </span>linux<span class="p">)</span>
+
+      <span class="c">### 两种方法将网桥和VETH连接起来</span>
+
+      <span class="o">(</span>ip link <span class="nb">set</span> <span class="s2">"</span><span class="nv">$LOCAL_IFNAME</span><span class="s2">"</span> master <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> &amp;gt; /dev/null 2&amp;gt;&amp;amp;1<span class="o">)</span> <span class="o">||</span> <span class="o">(</span>brctl addif <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> <span class="s2">"</span><span class="nv">$LOCAL_IFNAME</span><span class="s2">"</span><span class="o">)</span>
+
+      <span class="p">;;</span>
+
+    openvswitch<span class="p">)</span>
+
+      <span class="k">if</span> ! ovs-vsctl list-ports <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> | grep -q <span class="s2">"</span><span class="nv">$LOCAL_IFNAME</span><span class="s2">"</span>; <span class="k">then
+
+        </span>ovs-vsctl add-port <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> <span class="s2">"</span><span class="nv">$LOCAL_IFNAME</span><span class="s2">"</span> <span class="k">${</span><span class="nv">VLAN</span>:+tag<span class="p">=</span><span class="s2">"</span><span class="nv">$VLAN</span><span class="s2">"</span><span class="k">}</span>
+
+      <span class="k">fi</span>
+
+      <span class="p">;;</span>
+
+  <span class="k">esac</span>
+
+  <span class="c">### 启动VETH</span>
+
+  ip link <span class="nb">set</span> <span class="s2">"</span><span class="nv">$LOCAL_IFNAME</span><span class="s2">"</span> up
+
+<span class="o">}</span>
+
+
+
+<span class="c"># If it's a physical interface, create a macvlan subinterface</span>
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$IFTYPE</span><span class="s2">"</span> <span class="o">=</span> phys <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+  <span class="o">[</span> <span class="s2">"</span><span class="nv">$VLAN</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+    <span class="o">[</span> ! -d <span class="s2">"/sys/class/net/</span><span class="k">${</span><span class="nv">IFNAME</span><span class="k">}</span><span class="s2">.</span><span class="k">${</span><span class="nv">VLAN</span><span class="k">}</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+      ip link add link <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> name <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">.</span><span class="nv">$VLAN</span><span class="s2">"</span> mtu <span class="s2">"</span><span class="nv">$MTU</span><span class="s2">"</span> <span class="nb">type </span>vlan id <span class="s2">"</span><span class="nv">$VLAN</span><span class="s2">"</span>
+
+    <span class="o">}</span>
+
+    ip link <span class="nb">set</span> <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> up
+
+    <span class="nv">IFNAME</span><span class="o">=</span><span class="nv">$IFNAME</span>.<span class="nv">$VLAN</span>
+
+  <span class="o">}</span>
+
+  <span class="nv">GUEST_IFNAME</span><span class="o">=</span>ph<span class="nv">$NSPID$CONTAINER_IFNAME</span>
+
+  ip link add link <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> dev <span class="s2">"</span><span class="nv">$GUEST_IFNAME</span><span class="s2">"</span> mtu <span class="s2">"</span><span class="nv">$MTU</span><span class="s2">"</span> <span class="nb">type </span>macvlan mode bridge
+
+  ip link <span class="nb">set</span> <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> up
+
+<span class="o">}</span>
+
+
+
+<span class="c"># If it's an IPoIB interface, create a virtual IPoIB interface (the IPoIB</span>
+
+<span class="c"># equivalent of a macvlan device)</span>
+
+<span class="c">#</span>
+
+<span class="c"># Note: no macvlan subinterface nor Ethernet bridge can be created on top of an</span>
+
+<span class="c"># IPoIB interface. InfiniBand is not Ethernet. IPoIB is an IP layer on top of</span>
+
+<span class="c"># InfiniBand, without an intermediate Ethernet layer.</span>
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$IFTYPE</span><span class="s2">"</span> <span class="o">=</span> ipoib <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+  <span class="nv">GUEST_IFNAME</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">IFNAME</span><span class="k">}</span><span class="s2">.</span><span class="k">${</span><span class="nv">NSPID</span><span class="k">}</span><span class="s2">"</span>
+
+
+
+  <span class="c"># If a partition key is provided, use it</span>
+
+  <span class="o">[</span> <span class="s2">"</span><span class="nv">$PKEY</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+    <span class="nv">GUEST_IFNAME</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">IFNAME</span><span class="k">}</span><span class="s2">.</span><span class="k">${</span><span class="nv">PKEY</span><span class="k">}</span><span class="s2">.</span><span class="k">${</span><span class="nv">NSPID</span><span class="k">}</span><span class="s2">"</span>
+
+    <span class="nv">PKEY</span><span class="o">=</span><span class="s2">"pkey 0x</span><span class="nv">$PKEY</span><span class="s2">"</span>
+
+  <span class="o">}</span>
+
+
+
+  ip link add link <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> name <span class="s2">"</span><span class="nv">$GUEST_IFNAME</span><span class="s2">"</span> <span class="nb">type </span>ipoib <span class="nv">$PKEY</span>
+
+  ip link <span class="nb">set</span> <span class="s2">"</span><span class="nv">$IFNAME</span><span class="s2">"</span> up
+
+<span class="o">}</span>
+
+
+
+<span class="c">### 设置VETH的另一端的net namespace和container一样</span>
+
+ip link <span class="nb">set</span> <span class="s2">"</span><span class="nv">$GUEST_IFNAME</span><span class="s2">"</span> netns <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span>
+
+<span class="c">### 在该net namespace下，给VETH的另一端重新命名为CONTAINER_IFNAME，默认情况下为eth1</span>
+
+ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> ip link <span class="nb">set</span> <span class="s2">"</span><span class="nv">$GUEST_IFNAME</span><span class="s2">"</span> name <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span>
+
+<span class="o">[</span> <span class="s2">"</span><span class="nv">$MACADDR</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> ip link <span class="nb">set </span>dev <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span> address <span class="s2">"</span><span class="nv">$MACADDR</span><span class="s2">"</span>
+
+
+
+<span class="c"># When using any of the DHCP methods, we start a DHCP client in the</span>
+
+<span class="c"># network namespace of the container. With the 'dhcp' method, the</span>
+
+<span class="c"># client used is taken from the Docker busybox image (therefore</span>
+
+<span class="c"># requiring no specific client installed on the host). Other methods</span>
+
+<span class="c"># use a locally installed client.</span>
+
+<span class="k">case</span> <span class="s2">"</span><span class="nv">$DHCP_CLIENT</span><span class="s2">"</span> <span class="k">in
+
+  </span>dhcp<span class="p">)</span>
+
+    docker run -d --net container:<span class="nv">$GUESTNAME</span> --cap-add NET_ADMIN
+
+           busybox udhcpc -i <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span> -x <span class="s2">"hostname:</span><span class="nv">$GUESTNAME</span><span class="s2">"</span>
+
+           <span class="nv">$DHCP_OPTIONS</span>
+
+           &amp;gt;/dev/null
+
+    <span class="p">;;</span>
+
+  udhcpc<span class="p">)</span>
+
+    ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> <span class="s2">"</span><span class="nv">$DHCP_CLIENT</span><span class="s2">"</span> -qi <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span>
+
+                                          -x <span class="s2">"hostname:</span><span class="nv">$GUESTNAME</span><span class="s2">"</span>
+
+                                          <span class="nv">$DHCP_OPTIONS</span>
+
+    <span class="p">;;</span>
+
+  dhclient<span class="p">)</span>
+
+    ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> <span class="s2">"</span><span class="nv">$DHCP_CLIENT</span><span class="s2">"</span> <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span>
+
+                                          -pf <span class="s2">"/var/run/dhclient.</span><span class="nv">$NSPID</span><span class="s2">.pid"</span>
+
+                                          -H <span class="s2">"</span><span class="nv">$GUESTNAME</span><span class="s2">"</span>
+
+                                          <span class="nv">$DHCP_OPTIONS</span>
+
+    <span class="c"># kill dhclient after get ip address to prevent device be used after container close</span>
+
+    <span class="nb">kill</span> <span class="s2">"</span><span class="k">$(</span>cat <span class="s2">"/var/run/dhclient.</span><span class="nv">$NSPID</span><span class="s2">.pid"</span><span class="k">)</span><span class="s2">"</span>
+
+    rm <span class="s2">"/var/run/dhclient.</span><span class="nv">$NSPID</span><span class="s2">.pid"</span>
+
+    <span class="p">;;</span>
+
+  dhcpcd<span class="p">)</span>
+
+    ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> <span class="s2">"</span><span class="nv">$DHCP_CLIENT</span><span class="s2">"</span> -q <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span> -h <span class="s2">"</span><span class="nv">$GUESTNAME</span><span class="s2">"</span>
+
+    <span class="p">;;</span>
+
+  <span class="s2">""</span><span class="p">)</span>
+
+    <span class="c">### 添加新的ip</span>
+
+    ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> ip addr add <span class="s2">"</span><span class="nv">$IPADDR</span><span class="s2">"</span> dev <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span>
+
+    <span class="c">### 先出默认的路由配置？</span>
+
+    <span class="o">[</span> <span class="s2">"</span><span class="nv">$GATEWAY</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+      ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> ip route delete default &amp;gt;/dev/null 2&amp;gt;&amp;amp;1 &amp;amp;&amp;amp; <span class="nb">true</span>
+
+    <span class="o">}</span>
+
+    ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> ip link <span class="nb">set</span> <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span> up
+
+    <span class="c">### 重新添加路由</span>
+
+    <span class="o">[</span> <span class="s2">"</span><span class="nv">$GATEWAY</span><span class="s2">"</span> <span class="o">]</span> &amp;amp;&amp;amp; <span class="o">{</span>
+
+      <span class="c">### ip route get命令和ip route show命令执行的操作是不同的。</span>
+
+      <span class="c">### ip route show命令只是显示现有的路由，而ip route get命令在必要时会派生出新的路由。</span>
+
+      ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> ip route get <span class="s2">"</span><span class="nv">$GATEWAY</span><span class="s2">"</span> &amp;gt;/dev/null 2&amp;gt;&amp;amp;1 <span class="o">||</span>
+
+      ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> ip route add <span class="s2">"</span><span class="nv">$GATEWAY</span><span class="s2">/32"</span> dev <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span>
+
+      ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> ip route replace default via <span class="s2">"</span><span class="nv">$GATEWAY</span><span class="s2">"</span>
+
+    <span class="o">}</span>
+
+    <span class="p">;;</span>
+
+<span class="k">esac</span>
+
+
+
+<span class="c"># Give our ARP neighbors a nudge about the new interface</span>
+
+<span class="k">if </span>installed arping; <span class="k">then
+
+  </span><span class="nv">IPADDR</span><span class="o">=</span><span class="k">$(</span><span class="nb">echo</span> <span class="s2">"</span><span class="nv">$IPADDR</span><span class="s2">"</span> | cut -d/ -f1<span class="k">)</span>
+
+  ip netns <span class="nb">exec</span> <span class="s2">"</span><span class="nv">$NSPID</span><span class="s2">"</span> arping -c 1 -A -I <span class="s2">"</span><span class="nv">$CONTAINER_IFNAME</span><span class="s2">"</span> <span class="s2">"</span><span class="nv">$IPADDR</span><span class="s2">"</span> &amp;gt; /dev/null 2&amp;gt;&amp;amp;1 <span class="o">||</span> <span class="nb">true
+
+</span><span class="k">else
+
+  </span><span class="nb">echo</span> <span class="s2">"Warning: arping not found; interface may not be immediately reachable"</span>
+
+<span class="k">fi</span>
+
+
+
+<span class="c"># Remove NSPID to avoid `ip netns` catch it.</span>
+
+rm -f <span class="s2">"/var/run/netns/</span><span class="nv">$NSPID</span><span class="s2">"</span>
+
+
+
+<span class="c"># vim: set tabstop=2 shiftwidth=2 softtabstop=2 expandtab :</span>
+
+</code></pre>
+</div>
+

@@ -1,0 +1,234 @@
+<p>spring可以说是目前全球使用最为广泛的java框架之一，spring提供的ioc，aop等功能大大的提高了开发的效率。spring在提高效率的同时，提供很多了扩展槽。自定义标签就是扩展槽之一，其他框架可以无缝的嵌入到spring中，方便开发者使用，比如阿里巴巴之前开源的dubbo就实现了自己的标签<code class="highlighter-rouge">&lt;dubbo:application&gt;、&lt;dubbo:registry&gt;、 &lt;dubbo:service&gt;</code>等。下面我们会介绍如何在spring中使用自定义标签。首先我们先介绍下我们要实现的标签的功能:</p>
+<blockquote>
+  <p>用户使用标签，在spring容器启动结束后，打印出jvm和系统的一些参数。</p>
+</blockquote>
+
+<h1 id="定义标签名称">定义标签名称</h1>
+<p>完事开头难，起名字尤其难，为了方便开发者使用，一个好的名字既能明确表达框架作者的意图又能方便记忆。既然是打印虚拟机相关的参数，所以我们将标签定义为<code class="highlighter-rouge">&lt;vm&gt;</code>，子标签定义为<code class="highlighter-rouge">info</code>，这样完整的标签就是<code class="highlighter-rouge">&lt;vm:info&gt;</code>。之所以我们需要定义子标签，是为了后面扩容其他功能。</p>
+
+<h1 id="定义namespace">定义Namespace</h1>
+<p>如果你之前阅读多一些spring的源码，每一个标签对应着一个Namespace，spring会根据Namespace查找Handler进行处理。所以接下来我们需要定一个Namespace，根据spring的命名规则，我们将其定义为<code class="highlighter-rouge">http://www.springframework.org/schema/vm</code>。</p>
+
+<h1 id="定义handler">定义Handler</h1>
+<p>有了Namespace后，就需要定义Handler了。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>public class VMHandler extends NamespaceHandlerSupport {
+
+    @Override
+    public void init() {
+        registerBeanDefinitionParser("info", new JavaInfoBeanDefinitionParser());
+    }
+}
+</code></pre>
+</div>
+
+<p>参照<code class="highlighter-rouge">&lt;context&gt;</code>，<code class="highlighter-rouge">&lt;vm&gt;</code>标签对应的Handler也继承自<code class="highlighter-rouge">NamespaceHandlerSupport</code>，<code class="highlighter-rouge">NamespaceHandlerSupport</code>的功能不做过多的介绍了。VMHandler的初始化函数主要负责注册子标签的Parser，在这里就是<code class="highlighter-rouge">info</code>。</p>
+
+<h1 id="定义parser">定义Parser</h1>
+<p>Spring调用Handler的时候，会根据子标签的名字调用到具体的Parser，上面我们已经定义了<code class="highlighter-rouge">info</code>对应的Parser，下面看一下其具体实现。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>public class JavaInfoBeanDefinitionParser implements BeanDefinitionParser {
+
+    @Override
+    public BeanDefinition parse(Element element, ParserContext parserContext) {
+        BeanDefinitionBuilder bdb = BeanDefinitionBuilder.genericBeanDefinition(JavaInfoTool.class);
+        bdb.setDependencyCheck(DEPENDENCY_CHECK_SIMPLE);
+        bdb.setScope(SCOPE_SINGLETON);
+
+        BeanDefinition definition = bdb.getRawBeanDefinition();
+        BeanDefinitionHolder holder = new BeanDefinitionHolder(definition, "vm-java-info", null);
+        registerBeanDefinition(holder, parserContext.getRegistry());
+
+        return definition;
+    }
+}
+</code></pre>
+</div>
+<p>Parser对应的功能比较简单，注册BeanDefinition，这个BeanDefinition对应的类是JavaInfoTool，也就是我们实现打印vm信息的类，同时给这个BeanDefinition定义一个id，id是<code class="highlighter-rouge">vm-java-info</code>。</p>
+
+<h1 id="定义javainfotool">定义JavaInfoTool</h1>
+<p>为了完成在Spring容器启动后打印vm信息的功能，JavaInfoTool需要保证在最后执行，最直接的方法是继承ApplicationListener，在Spring容器状态发生变化的时候调用。</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>public class JavaInfoTool implements ApplicationListener&lt;ContextRefreshedEvent&gt; {
+
+    public void printJavaInfo() {
+        Properties properties = System.getProperties();
+        for (Map.Entry entry : properties.entrySet()) {
+            System.out.printf("%20s -&gt; %s\r\n", entry.getKey(), entry.getValue());
+        }
+    }
+
+    @Override
+    public void onApplicationEvent(ContextRefreshedEvent event) {
+        if(event.getApplicationContext().getParent() == null) {
+            printJavaInfo();
+        }
+    }
+}
+</code></pre>
+</div>
+<p>实现打印vm信息的代码逻辑比较简单，这里就不做过多介绍了。</p>
+
+<h1 id="添加配置文件">添加配置文件</h1>
+<p>到这里代码层面的工作都差不多完成了，但是还是不能直接使用。我们需要定义三个文件，</p>
+<ul>
+  <li>spring.handlers</li>
+  <li>spring.schemas</li>
+  <li>spring-vm-xx.xsd</li>
+</ul>
+
+<h2 id="springhandlers">spring.handlers</h2>
+<p>这个文件用于指定Namespace对应的Handler，Spring在启动过程中会扫描这个文件，加载对应关系。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>http\://www.springframework.org/schema/vm=com.lpmoon.spring.VMInfoHandler
+</code></pre>
+</div>
+
+<h2 id="springschemas">spring.schemas</h2>
+<p>这个文件用于定义对应Schema文件所在位置，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>http\://www.springframework.org/schema/vm/spring-vm-2.5.xsd=com/lpmoon/spring/spring-vm-2.5.xsd
+http\://www.springframework.org/schema/vm/spring-vm-3.0.xsd=com/lpmoon/spring/spring-vm-3.0.xsd
+http\://www.springframework.org/schema/vm/spring-vm-3.1.xsd=com/lpmoon/spring/spring-vm-3.1.xsd
+http\://www.springframework.org/schema/vm/spring-vm-3.2.xsd=com/lpmoon/spring/spring-vm-3.2.xsd
+http\://www.springframework.org/schema/vm/spring-vm-4.0.xsd=com/lpmoon/spring/spring-vm-4.0.xsd
+http\://www.springframework.org/schema/vm/spring-vm-4.1.xsd=com/lpmoon/spring/spring-vm-4.1.xsd
+http\://www.springframework.org/schema/vm/spring-vm-4.2.xsd=com/lpmoon/spring/spring-vm-4.2.xsd
+http\://www.springframework.org/schema/vm/spring-vm-4.3.xsd=com/lpmoon/spring/spring-vm-4.3.xsd
+http\://www.springframework.org/schema/vm/spring-vm.xsd=com/lpmoon/spring/spring-vm-4.3.xsd
+</code></pre>
+</div>
+
+<h2 id="spring-vm-xxxsd">spring-vm-xx.xsd</h2>
+<p>因为我们需要支持从2-x到4-x多个版本的Spring，所以我们需要根据spring.schemas重定义的schema创建多个版本的xsd文件，文件放置在<code class="highlighter-rouge">com/lpmoon/spring/</code>目录下。</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0" encoding="UTF-8"?&gt;</span>
+
+<span class="nt">&lt;xsd:schema</span> <span class="na">xmlns=</span><span class="s">"http://www.springframework.org/schema/vm"</span>
+            <span class="na">xmlns:xsd=</span><span class="s">"http://www.w3.org/2001/XMLSchema"</span>
+            <span class="na">xmlns:tool=</span><span class="s">"http://www.springframework.org/schema/tool"</span>
+            <span class="na">targetNamespace=</span><span class="s">"http://www.springframework.org/schema/vm"</span>
+            <span class="na">elementFormDefault=</span><span class="s">"qualified"</span>
+            <span class="na">attributeFormDefault=</span><span class="s">"unqualified"</span><span class="nt">&gt;</span>
+
+    <span class="nt">&lt;xsd:annotation&gt;</span>
+        <span class="nt">&lt;xsd:documentation&gt;</span><span class="cp">&lt;![CDATA[
+	Defines the vm elements for the Spring Framework's application
+	context support.
+		]]&gt;</span><span class="nt">&lt;/xsd:documentation&gt;</span>
+    <span class="nt">&lt;/xsd:annotation&gt;</span>
+
+    <span class="nt">&lt;xsd:element</span> <span class="na">name=</span><span class="s">"info"</span><span class="nt">&gt;</span>
+        <span class="nt">&lt;xsd:annotation&gt;</span>
+            <span class="nt">&lt;xsd:documentation&gt;</span><span class="cp">&lt;![CDATA[
+java info.
+			]]&gt;</span><span class="nt">&lt;/xsd:documentation&gt;</span>
+            <span class="nt">&lt;xsd:appinfo&gt;</span>
+                <span class="nt">&lt;tool:annotation&gt;</span>
+                    <span class="nt">&lt;tool:exports</span> <span class="na">type=</span><span class="s">"com.lpmoon.spring.JavaInfoTool"</span><span class="nt">/&gt;</span>
+                <span class="nt">&lt;/tool:annotation&gt;</span>
+            <span class="nt">&lt;/xsd:appinfo&gt;</span>
+        <span class="nt">&lt;/xsd:annotation&gt;</span>
+    <span class="nt">&lt;/xsd:element&gt;</span>
+
+<span class="nt">&lt;/xsd:schema&gt;</span>
+</code></pre>
+</div>
+<p>上面的文件定义了vm标签，以及子标签info的含义。</p>
+
+<h1 id="打包">打包</h1>
+<p>到这里所有的文件都已经定义好了，我们来看一看具体的文件结构，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>|____pom.xml
+|____src
+| |____main
+| | |____java
+| | | |____com
+| | | | |____lpmoon
+| | | | | |____spring
+| | | | | | |____JavaInfoBeanDefinitionParser.java
+| | | | | | |____JavaInfoTool.java
+| | | | | | |____spring-vm-2.5.xsd
+| | | | | | |____spring-vm-3.0.xsd
+| | | | | | |____spring-vm-3.1.xsd
+| | | | | | |____spring-vm-3.2.xsd
+| | | | | | |____spring-vm-4.0.xsd
+| | | | | | |____spring-vm-4.1.xsd
+| | | | | | |____spring-vm-4.2.xsd
+| | | | | | |____spring-vm-4.3.xsd
+| | | | | | |____VMHandler.java
+| | |____resources
+| | | |____META-INF
+| | | | |____spring.handlers
+| | | | |____spring.schemas
+
+</code></pre>
+</div>
+
+<p>为了方便他人使用我们需要将我们定义的文件打包成jar文件，配置pom文件如下，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    &lt;build&gt;
+        &lt;plugins&gt;
+            &lt;plugin&gt;
+                &lt;artifactId&gt;maven-resources-plugin&lt;/artifactId&gt;
+                &lt;version&gt;2.5&lt;/version&gt;
+                &lt;executions&gt;
+                    &lt;execution&gt;
+                        &lt;id&gt;copy-xmls&lt;/id&gt;
+                        &lt;phase&gt;process-sources&lt;/phase&gt;
+                        &lt;goals&gt;
+                            &lt;goal&gt;copy-resources&lt;/goal&gt;
+                        &lt;/goals&gt;
+                        &lt;configuration&gt;
+                            &lt;outputDirectory&gt;${basedir}/target/classes&lt;/outputDirectory&gt;
+                            &lt;resources&gt;
+                                &lt;resource&gt;
+                                    &lt;directory&gt;${basedir}/src/main/java&lt;/directory&gt;
+                                    &lt;includes&gt;
+                                        &lt;include&gt;**/*.xsd&lt;/include&gt;
+                                    &lt;/includes&gt;
+                                &lt;/resource&gt;
+                            &lt;/resources&gt;
+                        &lt;/configuration&gt;
+                    &lt;/execution&gt;
+                &lt;/executions&gt;
+            &lt;/plugin&gt;
+        &lt;/plugins&gt;
+    &lt;/build&gt;
+</code></pre>
+</div>
+<p>上面的配置的主要作用是将xsd文件打包到对应的目录下，否则使用该jar启动的时候会报错。执行</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>mvn clean install
+</code></pre>
+</div>
+<p>后对应的jar包里面的内容为</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>|____com
+| |____lpmoon
+| | |____spring
+| | | |____JavaInfoBeanDefinitionParser.class
+| | | |____JavaInfoTool.class
+| | | |____spring-vm-2.5.xsd
+| | | |____spring-vm-3.0.xsd
+| | | |____spring-vm-3.1.xsd
+| | | |____spring-vm-3.2.xsd
+| | | |____spring-vm-4.0.xsd
+| | | |____spring-vm-4.1.xsd
+| | | |____spring-vm-4.2.xsd
+| | | |____spring-vm-4.3.xsd
+| | | |____VMInfoHandler.class
+|____META-INF
+| |____spring.handlers
+| |____spring.schemas
+
+</code></pre>
+</div>
+
+<h1 id="使用">使用</h1>
+
+<p>建立项目，在对应的配置文件中添加如下配置，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>&lt;vm:info/&gt;
+</code></pre>
+</div>
+<p>然后启动代码，可以看到如下输出，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>   java.runtime.name -&gt; Java(TM) SE Runtime Environment
+sun.boot.library.path -&gt; /Library/Java/JavaVirtualMachines/jdk1.8.0_111.jdk/Contents/Home/jre/lib
+
+......
+
+</code></pre>
+</div>
+

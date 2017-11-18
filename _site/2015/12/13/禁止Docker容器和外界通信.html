@@ -1,0 +1,130 @@
+<h2 id="禁用ip_forward">禁用ip_forward</h2>
+
+<p>ip_farward表示是否允许网络包在不同的网卡之间转发。如果容器想和外界通信，当网络包到了docker0网桥后，需要转发到对应的宿主机网卡，然后由宿主机网卡与外界通信。ip_farward禁用后，从docker0到宿主机网卡的这一步就走不通了，从而达到了禁止与外界通信的目的。</p>
+
+<p>在启动docker daemon的时候使用–ip_farward=false就可以了。</p>
+
+<p>这里大家可能有疑问当docker0接收到容器发过来的报文的时候，他怎么知道要把报文发送到宿主机的网卡呢？</p>
+
+<p>在中断运行route命令后可以得到本机的路由表，宿主机会根据路由表决定一个报文的最终走向。</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+root@lpmoon-ThinkPad-S430:~# route
+
+Kernel IP routing table
+
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+
+default         192.168.1.1     0.0.0.0         UG    0      0        0 wlan0
+
+10.0.3.0        *               255.255.255.0   U     0      0        0 lxcbr0
+
+172.17.0.0      *               255.255.0.0     U     0      0        0 docker0
+
+192.168.1.0     *               255.255.255.0   U     9      0        0 wlan0
+
+</code></pre>
+</div>
+
+<p>我们可以看到默认路由的定义是将报文最终会被发送到wlan0网卡，由该网卡与外界进行通讯。而表中172.17.0.0对应的就是容器之间通讯的转发规则。</p>
+
+<h2 id="使用iptables防火墙">使用iptables防火墙</h2>
+
+<p>先来看看iptables的解释，</p>
+
+<blockquote>
+  <p>Iptables and ip6tables are used to set up, maintain, and inspect the tables of IPv4 and IPv6 packet filter rules in the Linux kernel. Several</p>
+</blockquote>
+
+<p>different tables may be defined. Each table contains a number of built-in chains and may also contain user-defined chains.</p>
+
+<p>Each chain is a list of rules which can match a set of packets. Each rule specifies what to do with a packet that matches. This is called a</p>
+
+<p>`target’, which may be a jump to a user-defined chain in the same table.</p>
+
+<p>// 翻译版</p>
+
+<p>iptables和ip6tables用于新建，管理和查询内核中的用于“过滤”ipv4和ipv6报文的规则（这里的过滤不只是单纯意义上的过滤，同时还包含了报文修改等操作，比如NAT）。在内核中有多张预定义表，每个表包括内置的多条过滤链以及用户自定义的过滤链。每一条过滤链包含了一系列的规则，每一条规则都作用于一个报文集合。每条规则指如何处理其对应的报文集合。</p>
+
+<p>预定义的表包括，filter，nat，mangle，raw，security。filter作为默认的表，也就是说你建立一个过滤规则的时候如果不指定表的话，那么这条规则就作用于filter表。这里简单介绍下filter和nat，</p>
+
+<p><strong>filter表:</strong> 用于表示当报文经过一个网卡的时候，由filter表决定是否接受这个报文。filter表中包含了三个过滤链(chains)，分别是INPUT（发往本地socket的），FORWARD（报文经过网卡，通过网卡进行路由转发，报文的目的地和源地址都是本机），OUTPUT（报文从本地发出的）</p>
+
+<p><strong>nat表:</strong> 用于修改报文。和filter表类似，nat也包含了三个过滤链(chains)，分别是PREROUTING，OUTPUT，POSTROUTING。</p>
+
+<h3 id="docker中的iptables">docker中的iptables</h3>
+
+<p>在终端运行iptables-save可以看到如下规则，</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+// FILTER
+
+-A FORWARD -i docker0 ! -o docker0 -j ACCEPT
+
+// NAT
+
+-A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE
+
+</code></pre>
+</div>
+
+<p>在解释这几个规则是什么意思之前先来看一下这两条规则中出现的-i和-o参数是什么意思。还是通过man命令，</p>
+
+<blockquote>
+  <p>[!] -i, –in-interface name</p>
+</blockquote>
+
+<p>Name of an interface via which a packet was received (only for packets entering the INPUT, FORWARD and PREROUTING chains). When the “!”</p>
+
+<p>argument is used before the interface name, the sense is inverted. If the interface name ends in a “+”, then any interface which begins</p>
+
+<p>with this name will match. If this option is omitted, any interface name will match.</p>
+
+<p>[!] -o, –out-interface name</p>
+
+<p>Name of an interface via which a packet is going to be sent (for packets entering the FORWARD, OUTPUT and POSTROUTING chains). When the</p>
+
+<p>”!” argument is used before the interface name, the sense is inverted. If the interface name ends in a “+”, then any interface which</p>
+
+<p>begins with this name will match. If this option is omitted, any interface name will match.</p>
+
+<p>-i表示的是接收到报文的interface，而-o则表示报文需要发往的interface。而!则表示否定。在了解了这几个概念后，上面的两条规则也就好懂了。</p>
+
+<p>第一条规则表示，如果接收报文的interface是docker0，并且这个报文将被发往的interface不是docker0，那么允许转发。</p>
+
+<p>第二条表示172.17.0.0/16网段的报文将被发往的interface不是docker0的时候，进行地址转化。</p>
+
+<p>可以从上面的两条规则入手，阻止报文进行转发到外网。</p>
+
+<h3 id="实验">实验</h3>
+
+<h4 id="禁用filter转发">禁用FILTER转发</h4>
+
+<p>在终端运行如下的命令，</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+iptables -D FORWARD -i docker0 ! -o docker0 -j ACCEPT
+
+iptables -A FORWARD -i docker0 ! -o docker0 -j DROP
+
+</code></pre>
+</div>
+
+<p>在之前可以联通外网的docker容器中运行 ping www.baidu.com后可以发现，容易与外界网络的通讯中断了。</p>
+
+<p>####禁用NAT转换</p>
+
+<p>在终端运行如下的命令，</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+iptables -t nat -D POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE
+
+</code></pre>
+</div>
+
+<p>和禁用转发可以达到相同的效果。</p>
+
+<h4 id="总结">总结</h4>
+
+<p>本文主要介绍了几种禁止容器与外界通讯的办法，涉及到了一些关于防火墙的知识，希望对大家可以从中学到一些东西。同时可以将上面的方法进行扩展用于达到禁止容器与容器之间通讯的目的。</p>
+

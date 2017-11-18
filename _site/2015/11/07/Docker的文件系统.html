@@ -1,0 +1,106 @@
+<p>Docker镜像在存储的时候实际上是按照一个个镜像层进行存储的，当不同的镜像的某一个镜像层一样的时候，这个镜像层就会被多个镜像使用。设想一下我们自己设计一个Docker的话，如果一个容器修改文件的时候会影响到其他容器我们会怎么解决呢？或许有的人会想到可以这样做，将镜像层设计为不可修改的，对容器的所有修改都在每个容器的缓冲层进行，这样的话我们看到的容器的文件系统实际上是镜像层加上容器的缓冲层叠加做一定的逻辑运算后生成的。的确，Docker也是这么做的，Docker的设计中我们看到的文件系是通过一个只读层（rootfs）加上一个读写层实现的，读写层位于只读层的上部，充当一个拦截器，该拦截器的作用是：</p>
+
+<ol>
+  <li>
+    <p>当你在Docker中删除文件的时候，会在读写层加入一个文件标志被删除的文件已经不存在了。当用于读取数据的时候，会先经过拦截器，拦截器发现该文件已经逻辑删除了，所以最终对用户呈现的就是这个文件不存在了。</p>
+  </li>
+  <li>
+    <p>当你在Docker中修改文件的时候，会在读写层生成一个与被修改文件完全一致的文件，这个文件的内容就是你修改之后的。</p>
+  </li>
+  <li>
+    <p>当你在Docker中添加文件的时候，实际生成的文件也是在读写层。</p>
+  </li>
+</ol>
+
+<p>下面我们使用aufs文件系统来模拟一下上述的模型。首先在一个文件夹中执行如下的命令：</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+mkdir read_layer &amp;&amp; mkdir write_layer &amp;&amp; mkdir union
+
+</code></pre>
+</div>
+
+<p>该命令会在文件夹下面生成三个子文件夹。然后在read_layer中生成一个文件，</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+cd read_layer/ &amp;&amp; echo test1 &gt; ./test
+
+</code></pre>
+</div>
+
+<p>test文件中的内容为test1。然后修改read_layer的访问权限为只读，</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+cd .. &amp;&amp; sudo chmod -R 555 ./read_layer
+
+</code></pre>
+</div>
+
+<p>使用ll查看当前目录可以看到read_layer的访问权限和其他文件夹不一样的。</p>
+
+<p><img src="http://ww2.sinaimg.cn/large/87f5e2f6jw1fa3gerlufvj20gq02n3zv.jpg" alt="http://ww2.sinaimg.cn/large/87f5e2f6jw1fa3gerlufvj20gq02n3zv.jpg" /></p>
+
+<p>接下来可以将read_layer和write_layer共同挂在到union上了，</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+sudo mount -t aufs -o br=./write_layer:./read_layer none ./union
+
+</code></pre>
+</div>
+
+<p>进入到union中我们可以看到read_layer中的文件也出现在union中了。</p>
+
+<h2 id="删除文件">删除文件</h2>
+
+<p>进入到union中删除test文件会出现什么呢？</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+cd union/ &amp;&amp; rm -rf test
+
+</code></pre>
+</div>
+
+<p>union中的文件不在了，但是read_layer中的还在同时在write_layer中新增了一个文件用于标示test文件被删除。</p>
+
+<p><img src="http://ww4.sinaimg.cn/large/87f5e2f6jw1fa3gerdyp4j20jn06u77o.jpg" alt="http://ww4.sinaimg.cn/large/87f5e2f6jw1fa3gerdyp4j20jn06u77o.jpg" /></p>
+
+<p>将.wh.test删除后test文件又会出现在union文件夹中。</p>
+
+<h2 id="修改文件">修改文件</h2>
+
+<p>如果我们进行修改呢，会发生什么（此时test文件还在union文件中）？</p>
+
+<p>进入到union文件夹中，vi打开test文件，修改为“test1aaaaaaaaaaaaaaaaaaaa”，wq!强行退出。然后查看test分别在union和read_layer中的内容，</p>
+
+<p><img src="http://ww2.sinaimg.cn/large/87f5e2f6jw1fa3geqxooqj20ho020js7.jpg" alt="http://ww2.sinaimg.cn/large/87f5e2f6jw1fa3geqxooqj20ho020js7.jpg" /></p>
+
+<p>可以发现修改内容实际上并没有修改只读层的文件，再继续查看write_layer中的文件，</p>
+
+<p><img src="http://ww3.sinaimg.cn/large/87f5e2f6jw1fa3geqpi1pj20gz04b40l.jpg" alt="http://ww3.sinaimg.cn/large/87f5e2f6jw1fa3geqpi1pj20gz04b40l.jpg" /></p>
+
+<p>果然多了一个和test完全同名的文件，那么内容如何呢？查看后可以发现其内容和union中的是一样的。</p>
+
+<p><img src="http://ww4.sinaimg.cn/large/87f5e2f6jw1fa3geqez73j20i20130t3.jpg" alt="http://ww4.sinaimg.cn/large/87f5e2f6jw1fa3geqez73j20i20130t3.jpg" /></p>
+
+<h2 id="新增文件">新增文件</h2>
+
+<p><img src="http://ww4.sinaimg.cn/large/87f5e2f6jw1fa3geq5k4cj20dh05vq3h.jpg" alt="http://ww4.sinaimg.cn/large/87f5e2f6jw1fa3geq5k4cj20dh05vq3h.jpg" /></p>
+
+<p>和修改文件的行为是类似的。</p>
+
+<p>通过上面的例子，相信大家对Docker是如何实现文件管理有了一些认识，更多的资料大家可以查看下面的连接：</p>
+
+<p><a href="http://www.thegeekstuff.com/2013/05/linux-aufs/">http://www.thegeekstuff.com/2013/05/linux-aufs/</a></p>
+
+<p><a href="https://github.com/docker/docker">https://github.com/docker/docker</a></p>
+
+<p><a href="https://en.wikipedia.org/wiki/Aufs">https://en.wikipedia.org/wiki/Aufs</a></p>
+
+<p><a href="https://en.wikipedia.org/wiki/Union_mount">https://en.wikipedia.org/wiki/Union_mount</a></p>
+
+<p><a href="https://en.wikipedia.org/wiki/UnionFS">https://en.wikipedia.org/wiki/UnionFS</a></p>
+
+<p>还有Docker提供了多种文件系统，aufs只是其中之一，更多的这里就不赘述了。</p>
+
+<p>Thank you</p>
+

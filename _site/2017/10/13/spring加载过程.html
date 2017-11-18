@@ -1,0 +1,742 @@
+<p>spring的启动过程在AbstractApplicationContext的refresh函数中，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	@Override
+	public void refresh() throws BeansException, IllegalStateException {
+		synchronized (this.startupShutdownMonitor) {
+			// Prepare this context for refreshing.
+			prepareRefresh();
+
+			// Tell the subclass to refresh the internal bean factory.
+			ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+
+			// Prepare the bean factory for use in this context.
+			prepareBeanFactory(beanFactory);
+
+			try {
+				// Allows post-processing of the bean factory in context subclasses.
+				postProcessBeanFactory(beanFactory);
+
+				// Invoke factory processors registered as beans in the context.
+				invokeBeanFactoryPostProcessors(beanFactory);
+
+				// Register bean processors that intercept bean creation.
+				registerBeanPostProcessors(beanFactory);
+
+				// Initialize message source for this context.
+				initMessageSource();
+
+				// Initialize event multicaster for this context.
+				initApplicationEventMulticaster();
+
+				// Initialize other special beans in specific context subclasses.
+				onRefresh();
+
+				// Check for listener beans and register them.
+				registerListeners();
+
+				// Instantiate all remaining (non-lazy-init) singletons.
+				finishBeanFactoryInitialization(beanFactory);
+
+				// Last step: publish corresponding event.
+				finishRefresh();
+			}
+
+			catch (BeansException ex) {
+            	// exception handle
+			}
+
+			finally {
+				// Reset common introspection caches in Spring's core, since we
+				// might not ever need metadata for singleton beans anymore...
+				resetCommonCaches();
+			}
+		}
+	}
+</code></pre>
+</div>
+
+<p>上面的过程主要分为以下几个部分</p>
+<ol>
+  <li>初始化bean factory, 查找bean的所有定义</li>
+  <li>配置bean factory</li>
+  <li>初始化事件广播器</li>
+  <li>子类初始化方法</li>
+  <li>注册事件监听器</li>
+  <li>根据查找到的所有定义的bean，进行初始化</li>
+</ol>
+
+<h1 id="初始化bean-factory-查找bean的所有定义">初始化bean factory, 查找bean的所有定义</h1>
+
+<p>bean的定义由obtainFreshBeanFactory()函数完成，这个函数会初始化一个bean factory，所有定义好的bean会存储在bean factory的一个map中。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>obtainFreshBeanFactory -&gt; refreshBeanFactory
+</code></pre>
+</div>
+<div class="highlighter-rouge"><pre class="highlight"><code>	@Override
+	protected final void refreshBeanFactory() throws BeansException {
+		if (hasBeanFactory()) {
+			destroyBeans();
+			closeBeanFactory();
+		}
+		try {
+			DefaultListableBeanFactory beanFactory = createBeanFactory();
+			beanFactory.setSerializationId(getId());
+			customizeBeanFactory(beanFactory);
+			loadBeanDefinitions(beanFactory);
+			synchronized (this.beanFactoryMonitor) {
+				this.beanFactory = beanFactory;
+			}
+		}
+		catch (IOException ex) {
+			throw new ApplicationContextException("I/O error parsing bean definition source for " + getDisplayName(), ex);
+		}
+	}
+</code></pre>
+</div>
+<p>refresh函数中完成bean factory的定义以及初始化，同时查找所有bean的定义。需要注意的是customizeBeanFactory会对bean factory进行一些配置，主要包括下面的两个属性</p>
+<ol>
+  <li>是否允许bean覆盖 -&gt;  allowBeanDefinitionOverriding</li>
+  <li>是否允许循环引用 -&gt; allowCircularReferences</li>
+</ol>
+
+<p>这里需要大致介绍下这两个属性，allowBeanDefinitionOverriding表示是否允许定义重名的bean，如果不允许则会抛出异常，否则会进行覆盖。allowCircularReferences表示是否允许循环依赖，所谓的循环依赖是指两个bean互相依赖，bean A是bean B的一个属性同时bean B也是bean A的一个属性，这样初始化bean A就需要先完成bean B的初始化，初始化bean B又需要bean A的初始化，这就产生了循环依赖的情况，下面会提到spring是如何完成循环依赖的注入的。需要注意的是allowBeanDefinitionOverriding用于bean定义阶段，而allowCircularReferences用于初始化阶段。</p>
+
+<p>在配置完bean factory后就进入到正是的查找bean定义阶段了，完成这项工作的是loadBeanDefinitions。</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>	@Override
+	protected void loadBeanDefinitions(DefaultListableBeanFactory beanFactory) throws BeansException, IOException {
+		// Create a new XmlBeanDefinitionReader for the given BeanFactory.
+		XmlBeanDefinitionReader beanDefinitionReader = new XmlBeanDefinitionReader(beanFactory);
+
+		// Configure the bean definition reader with this context's
+		// resource loading environment.
+		beanDefinitionReader.setEnvironment(this.getEnvironment());
+		beanDefinitionReader.setResourceLoader(this);
+		beanDefinitionReader.setEntityResolver(new ResourceEntityResolver(this));
+
+		// Allow a subclass to provide custom initialization of the reader,
+		// then proceed with actually loading the bean definitions.
+		initBeanDefinitionReader(beanDefinitionReader);
+		loadBeanDefinitions(beanDefinitionReader);
+	}
+</code></pre>
+</div>
+<p>由于我们需要加载的bean一部分定义在xml中，所以我们需要读取xml文件，在spring中这个功能由XmlBeanDefinitionReader完成。定义好xml的reader后，继续调用重载函数loadBeanDefinitions进行加载，不同的是此时参数已经变成了刚才定义的reader。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	protected void loadBeanDefinitions(XmlBeanDefinitionReader reader) throws BeansException, IOException {
+		Resource[] configResources = getConfigResources();
+		if (configResources != null) {
+			reader.loadBeanDefinitions(configResources);
+		}
+		String[] configLocations = getConfigLocations();
+		if (configLocations != null) {
+			reader.loadBeanDefinitions(configLocations);
+		}
+	}
+</code></pre>
+</div>
+<p>loadBeanDefinitions会针对每一个xml资源调用一次reader的loadBeanDefinitions函数进行加载，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	@Override
+	public int loadBeanDefinitions(String... locations) throws BeanDefinitionStoreException {
+		Assert.notNull(locations, "Location array must not be null");
+		int counter = 0;
+		for (String location : locations) {
+			counter += loadBeanDefinitions(location);
+		}
+		return counter;
+	}
+</code></pre>
+</div>
+
+<p>经过资源查找一系列操作后最终会进入到下面的方法中，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	public int loadBeanDefinitions(EncodedResource encodedResource) throws BeanDefinitionStoreException {
+		Set&lt;EncodedResource&gt; currentResources = this.resourcesCurrentlyBeingLoaded.get();
+		if (currentResources == null) {
+			currentResources = new HashSet&lt;EncodedResource&gt;(4);
+			this.resourcesCurrentlyBeingLoaded.set(currentResources);
+		}
+		if (!currentResources.add(encodedResource)) {
+			throw new BeanDefinitionStoreException(
+					"Detected cyclic loading of " + encodedResource + " - check your import definitions!");
+		}
+		try {
+			InputStream inputStream = encodedResource.getResource().getInputStream();
+			try {
+				InputSource inputSource = new InputSource(inputStream);
+				if (encodedResource.getEncoding() != null) {
+					inputSource.setEncoding(encodedResource.getEncoding());
+				}
+				return doLoadBeanDefinitions(inputSource, encodedResource.getResource());
+			}
+			finally {
+				inputStream.close();
+			}
+		}
+		catch (IOException ex) {
+			throw new BeanDefinitionStoreException(
+					"IOException parsing XML document from " + encodedResource.getResource(), ex);
+		}
+		finally {
+			currentResources.remove(encodedResource);
+			if (currentResources.isEmpty()) {
+				this.resourcesCurrentlyBeingLoaded.remove();
+			}
+		}
+	}
+</code></pre>
+</div>
+
+<p>上面的代码比较长大致可以分为三个阶段</p>
+<ol>
+  <li>记录当前正在处理的resource，如果当前resource已经在处理中则会抛出异常</li>
+  <li>获取文件的流</li>
+  <li>读取流并且进行bean加载</li>
+  <li>加载成功后从正在处理的resource集合中移除当前resource</li>
+</ol>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>	protected int doLoadBeanDefinitions(InputSource inputSource, Resource resource)
+			throws BeanDefinitionStoreException {
+		try {
+			Document doc = doLoadDocument(inputSource, resource);
+			return registerBeanDefinitions(doc, resource);
+		}
+		catch (Exception ex) {
+			// handle exception
+		}
+	}
+</code></pre>
+</div>
+
+<p>继续沿着上面的代码往下跟踪会进入到parseBeanDefinitions(Element root, …)中，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	protected void parseBeanDefinitions(Element root, BeanDefinitionParserDelegate delegate) {
+		if (delegate.isDefaultNamespace(root)) {
+			NodeList nl = root.getChildNodes();
+			for (int i = 0; i &lt; nl.getLength(); i++) {
+				Node node = nl.item(i);
+				if (node instanceof Element) {
+					Element ele = (Element) node;
+					if (delegate.isDefaultNamespace(ele)) {
+						parseDefaultElement(ele, delegate);
+					}
+					else {
+						delegate.parseCustomElement(ele);
+					}
+				}
+			}
+		}
+		else {
+			delegate.parseCustomElement(root);
+		}
+	}
+</code></pre>
+</div>
+<p>上面的代码扫描root节点的每个子节点，然后判断子节点是否是Element，如果不是则继续下一个子节点，如果是则判断是否是默认的namespace，如果是则调用parseDefaultElement处理，否则调用delegate的parseCustomElement进行处理。这里需要说明一下默认的namespace是指 <strong>http://www.springframework.org/schema/beans</strong> ，如果我们在xml中设置了下面的配置</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>&lt;context:annotation-config /&gt;
+</code></pre>
+</div>
+<p>那么这个配置对应的namespace则是 <strong>http://www.springframework.org/schema/context</strong> ，与默认的就不相同了。</p>
+
+<h3 id="默认的namespace">默认的namespace</h3>
+<p>首先我们先看一下默认的namespace会进行什么处理，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>
+	private void parseDefaultElement(Element ele, BeanDefinitionParserDelegate delegate) {
+		if (delegate.nodeNameEquals(ele, IMPORT_ELEMENT)) {
+			importBeanDefinitionResource(ele);
+		}
+		else if (delegate.nodeNameEquals(ele, ALIAS_ELEMENT)) {
+			processAliasRegistration(ele);
+		}
+		else if (delegate.nodeNameEquals(ele, BEAN_ELEMENT)) {
+			processBeanDefinition(ele, delegate);
+		}
+		else if (delegate.nodeNameEquals(ele, NESTED_BEANS_ELEMENT)) {
+			// recurse
+			doRegisterBeanDefinitions(ele);
+		}
+	}
+</code></pre>
+</div>
+<p>从代码我们可以推断出有四个element属于默认的namespace，分别是</p>
+<ol>
+  <li>import -&gt; 引入其他配置文件</li>
+  <li>alias -&gt; 给某个bean起一个别名</li>
+  <li>bean -&gt; bean定义</li>
+  <li>beans -&gt; 内嵌的beans</li>
+</ol>
+
+<p>如果是import类型的，则会解析import中定义的配置路径，然后根据解析出的路径进行bean definition。如果是alias，则记录alias到原始名称的映射关系，这个映射关系存储在map表中。如果是bean类型的则调用processBeanDefinition处理。如果是beans的，则调用doRegisterBeanDefinitions进行递归处理。</p>
+
+<p>在这里我们重点关注下element为bean类型的，因为上面的其他三种类型最终都会转化为bean类型。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	/**
+	 * Process the given bean element, parsing the bean definition
+	 * and registering it with the registry.
+	 */
+	protected void processBeanDefinition(Element ele, BeanDefinitionParserDelegate delegate) {
+		BeanDefinitionHolder bdHolder = delegate.parseBeanDefinitionElement(ele);
+		if (bdHolder != null) {
+			bdHolder = delegate.decorateBeanDefinitionIfRequired(ele, bdHolder);
+			try {
+				// Register the final decorated instance.
+				BeanDefinitionReaderUtils.registerBeanDefinition(bdHolder, getReaderContext().getRegistry());
+			}
+			catch (BeanDefinitionStoreException ex) {
+				getReaderContext().error("Failed to register bean definition with name '" +
+						bdHolder.getBeanName() + "'", ele, ex);
+			}
+			// Send registration event.
+			getReaderContext().fireComponentRegistered(new BeanComponentDefinition(bdHolder));
+		}
+	}
+</code></pre>
+</div>
+
+<p>上面的代码不是很复杂，主要是解析element里面的各个元素包括name, class, init-method, alias等等，然后将其封装到BeanDefinitionHolder中，然后将其注册到bean factory中。如果bean设置了alias则需要将alias到原始名称的映射记录下来，这个操作和上面的alias类型一致。bean的注册调用的是registerBeanDefinition方法，这里面会用到我们之前提过的allowBeanDefinitionOverriding属性判断当前bean是否应该被注册，具体代码可以参照下面</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>		BeanDefinition oldBeanDefinition;
+
+		oldBeanDefinition = this.beanDefinitionMap.get(beanName);
+		if (oldBeanDefinition != null) {
+			if (!isAllowBeanDefinitionOverriding()) {
+				throw new BeanDefinitionStoreException(beanDefinition.getResourceDescription(), beanName,
+						"Cannot register bean definition [" + beanDefinition + "] for bean '" + beanName +
+						"': There is already [" + oldBeanDefinition + "] bound.");
+			}
+			else if (oldBeanDefinition.getRole() &lt; beanDefinition.getRole()) {
+				// e.g. was ROLE_APPLICATION, now overriding with ROLE_SUPPORT or ROLE_INFRASTRUCTURE
+				if (this.logger.isWarnEnabled()) {
+					this.logger.warn("Overriding user-defined bean definition for bean '" + beanName +
+							"' with a framework-generated bean definition: replacing [" +
+							oldBeanDefinition + "] with [" + beanDefinition + "]");
+				}
+			}
+			else if (!beanDefinition.equals(oldBeanDefinition)) {
+				if (this.logger.isInfoEnabled()) {
+					this.logger.info("Overriding bean definition for bean '" + beanName +
+							"' with a different definition: replacing [" + oldBeanDefinition +
+							"] with [" + beanDefinition + "]");
+				}
+			}
+			else {
+				if (this.logger.isDebugEnabled()) {
+					this.logger.debug("Overriding bean definition for bean '" + beanName +
+							"' with an equivalent definition: replacing [" + oldBeanDefinition +
+							"] with [" + beanDefinition + "]");
+				}
+			}
+			this.beanDefinitionMap.put(beanName, beanDefinition);
+		}
+</code></pre>
+</div>
+<p>方法首先会从beanDefinitionMap中获取beanDefinition，如果没有则进行注册，如果有了则判断是否允许覆盖，这里就是通过allowBeanDefinitionOverriding参数完成的。如果不允许覆盖，则会直接抛出异常。</p>
+
+<h3 id="自定义namespace">自定义namespace</h3>
+<p>上面描述了默认namespace的处理过程，下面会对自定义namespace的解析过程做一个大致的描述。为了更好的说明，我们以</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>&lt;context:annotation-config /&gt;
+</code></pre>
+</div>
+<p>为例。</p>
+
+<p>首先会调用BeanDefinitionParserDelegate的parseCustomElement进行处理，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	public BeanDefinition parseCustomElement(Element ele) {
+		return parseCustomElement(ele, null);
+	}
+</code></pre>
+</div>
+<p>接下来处理会交给parseCustomElement方法，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	public BeanDefinition parseCustomElement(Element ele, BeanDefinition containingBd) {
+		String namespaceUri = getNamespaceURI(ele);
+		NamespaceHandler handler = this.readerContext.getNamespaceHandlerResolver().resolve(namespaceUri);
+		if (handler == null) {
+			error("Unable to locate Spring NamespaceHandler for XML schema namespace [" + namespaceUri + "]", ele);
+			return null;
+		}
+		return handler.parse(ele, new ParserContext(this.readerContext, this, containingBd));
+	}
+</code></pre>
+</div>
+<p>上面的代码首先获取element对应的namespace，然后获取对应的handler。所有handler的定义来自META-INF/spring.handlers文件，spring解析类路径下的所有spring.handlers文件，然后将其合并问一个map，map的key为namespace，value是对应的handler的类名称。解析完所有的spring.handlers文件后，spring遍历map，通过类加载器加载所有handler类，并且进行初始化，放到handlerMappings（一个map）中，对应的key是namespace，value是handler实例。
+因为我们以context标签为例，所以这里获取的handler就是ContextNamespaceHandler。获取到handler后，进入到parse阶段，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	@Override
+	public BeanDefinition parse(Element element, ParserContext parserContext) {
+		return findParserForElement(element, parserContext).parse(element, parserContext);
+	}
+    
+    /**
+	 * Locates the {@link BeanDefinitionParser} from the register implementations using
+	 * the local name of the supplied {@link Element}.
+	 */
+	private BeanDefinitionParser findParserForElement(Element element, ParserContext parserContext) {
+		String localName = parserContext.getDelegate().getLocalName(element);
+		BeanDefinitionParser parser = this.parsers.get(localName);
+		if (parser == null) {
+			parserContext.getReaderContext().fatal(
+					"Cannot locate BeanDefinitionParser for element [" + localName + "]", element);
+		}
+		return parser;
+	}
+</code></pre>
+</div>
+<p>从parse函数可以看出，ContextNamespaceHandler不是最终的处理类，它还会根据local name也就是上面标签中的annotation-config查找对应的parser，具体到这个例子对应的parser是AnnocationConfigBeanDefinitionParser，这个parser是在ContextNamespaceHandler初始化的时候注册到handler中的</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>public class ContextNamespaceHandler extends NamespaceHandlerSupport {
+
+	@Override
+	public void init() {
+		registerBeanDefinitionParser("property-placeholder", new PropertyPlaceholderBeanDefinitionParser());
+		registerBeanDefinitionParser("property-override", new PropertyOverrideBeanDefinitionParser());
+        // 这里就是上面提到的parser
+		registerBeanDefinitionParser("annotation-config", new AnnotationConfigBeanDefinitionParser());
+		registerBeanDefinitionParser("component-scan", new ComponentScanBeanDefinitionParser());
+		registerBeanDefinitionParser("load-time-weaver", new LoadTimeWeaverBeanDefinitionParser());
+		registerBeanDefinitionParser("spring-configured", new SpringConfiguredBeanDefinitionParser());
+		registerBeanDefinitionParser("mbean-export", new MBeanExportBeanDefinitionParser());
+		registerBeanDefinitionParser("mbean-server", new MBeanServerBeanDefinitionParser());
+	}
+
+}
+</code></pre>
+</div>
+<p>AnnotationConfigBeanDefinitionParser将Annotation相关的一些Processor注册到bean factory中，包括</p>
+<ol>
+  <li>ConfigurationClassPostProcessor</li>
+  <li>AutowiredAnnotationBeanPostProcessor</li>
+  <li>RequiredAnnotationBeanPostProcessor</li>
+  <li>CommonAnnotationBeanPostProcessor
+等，这些都是用来处理在spring中出现的注解的。</li>
+</ol>
+
+<p><strong><font color="red" size="5">到这为止，bean的定义阶段就完成了，下面进入bean factory的配置阶段</font></strong></p>
+
+<h1 id="配置bean-factory">配置bean factory</h1>
+
+<p>bean factory的配置阶段分为多步，</p>
+<ol>
+  <li>准备阶段</li>
+  <li>后处理阶段，目前什么都没做</li>
+  <li>调用ApplicationContext中设置的BeanFactoryPostProcessor和bean factory加载的所有BeanFactoryPostProcessor处理bean factory</li>
+  <li>查找bean factory加载的所有BeanPostProcessor，然后设置到bean factory的beanPostProcessors中
+    <div class="highlighter-rouge"><pre class="highlight"><code>         // Prepare the bean factory for use in this context.
+         prepareBeanFactory(beanFactory);
+
+         try {
+             // Allows post-processing of the bean factory in context subclasses.
+             postProcessBeanFactory(beanFactory);
+
+             // Invoke factory processors registered as beans in the context.
+             invokeBeanFactoryPostProcessors(beanFactory);
+
+             // Register bean processors that intercept bean creation.
+             registerBeanPostProcessors(beanFactory);
+                
+             ...
+                
+         } catch() ...
+</code></pre>
+    </div>
+    <p>第四步提到的所有beanPostProcessors在bean初始化之后会依次进行调用。</p>
+  </li>
+</ol>
+
+<h1 id="初始化事件广播器">初始化事件广播器</h1>
+<p>事件广播器用于广播消息，所有的消息会被后面注册的监听器所处理</p>
+
+<h1 id="子类初始化方法">子类初始化方法</h1>
+<p>该步骤需要AbstractApplicationContext的子类覆写onRefresh方法</p>
+
+<h1 id="注册事件监听器">注册事件监听器</h1>
+<p>该步骤注册的所有监听器会接收到消息广播器推送的消息，并且进行处理</p>
+
+<h1 id="根据查找到的所有定义的bean进行初始化">根据查找到的所有定义的bean，进行初始化</h1>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>	protected void finishBeanFactoryInitialization(ConfigurableListableBeanFactory beanFactory) {
+		// Initialize conversion service for this context.
+		if (beanFactory.containsBean(CONVERSION_SERVICE_BEAN_NAME) &amp;&amp;
+				beanFactory.isTypeMatch(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class)) {
+			beanFactory.setConversionService(
+					beanFactory.getBean(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class));
+		}
+
+		// Register a default embedded value resolver if no bean post-processor
+		// (such as a PropertyPlaceholderConfigurer bean) registered any before:
+		// at this point, primarily for resolution in annotation attribute values.
+		if (!beanFactory.hasEmbeddedValueResolver()) {
+			beanFactory.addEmbeddedValueResolver(new StringValueResolver() {
+				@Override
+				public String resolveStringValue(String strVal) {
+					return getEnvironment().resolvePlaceholders(strVal);
+				}
+			});
+		}
+
+		// Initialize LoadTimeWeaverAware beans early to allow for registering their transformers early.
+		String[] weaverAwareNames = beanFactory.getBeanNamesForType(LoadTimeWeaverAware.class, false, false);
+		for (String weaverAwareName : weaverAwareNames) {
+			getBean(weaverAwareName);
+		}
+
+		// Stop using the temporary ClassLoader for type matching.
+		beanFactory.setTempClassLoader(null);
+
+		// Allow for caching all bean definition metadata, not expecting further changes.
+		beanFactory.freezeConfiguration();
+
+		// Instantiate all remaining (non-lazy-init) singletons.
+		beanFactory.preInstantiateSingletons();
+	}
+</code></pre>
+</div>
+
+<ol>
+  <li>设置Conversation Service</li>
+  <li>如果没有设置StringValueResolver，则设置默认的StringValueResolver。StringValueResolver用于解析bean初始化时传入的字符串，这里的字符串包括一些模板类型的通配符，例如${xxx}</li>
+  <li>加载bean</li>
+</ol>
+
+<p>第三步的加载bean是通过bean factory的preInstantiateSingletons来完成的，该函数遍历bean factory中所有的bean definition，如果bean不是抽象的，是单例的，并且不是延迟加载的，则进行初始化。</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>		// Trigger initialization of all non-lazy singleton beans...
+		for (String beanName : beanNames) {
+			RootBeanDefinition bd = getMergedLocalBeanDefinition(beanName);
+			if (!bd.isAbstract() &amp;&amp; bd.isSingleton() &amp;&amp; !bd.isLazyInit()) {
+				if (isFactoryBean(beanName)) {
+					final FactoryBean&lt;?&gt; factory = (FactoryBean&lt;?&gt;) getBean(FACTORY_BEAN_PREFIX + beanName);
+					boolean isEagerInit;
+					if (System.getSecurityManager() != null &amp;&amp; factory instanceof SmartFactoryBean) {
+						isEagerInit = AccessController.doPrivileged(new PrivilegedAction&lt;Boolean&gt;() {
+							@Override
+							public Boolean run() {
+								return ((SmartFactoryBean&lt;?&gt;) factory).isEagerInit();
+							}
+						}, getAccessControlContext());
+					}
+					else {
+						isEagerInit = (factory instanceof SmartFactoryBean &amp;&amp;
+								((SmartFactoryBean&lt;?&gt;) factory).isEagerInit());
+					}
+					if (isEagerInit) {
+						getBean(beanName);
+					}
+				}
+				else {
+					getBean(beanName);
+				}
+			}
+		}
+</code></pre>
+</div>
+<p>初始化由getBean方法完成，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	@Override
+	public Object getBean(String name) throws BeansException {
+		return doGetBean(name, null, null, false);
+	}  
+</code></pre>
+</div>
+
+<p>doGetBean代码比较长，提炼一下核心的代码如下所示，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>				// Create bean instance.
+				if (mbd.isSingleton()) {
+					sharedInstance = getSingleton(beanName, new ObjectFactory&lt;Object&gt;() {
+						@Override
+						public Object getObject() throws BeansException {
+							try {
+								return createBean(beanName, mbd, args);
+							}
+							catch (BeansException ex) {
+								// Explicitly remove instance from singleton cache: It might have been put there
+								// eagerly by the creation process, to allow for circular reference resolution.
+								// Also remove any beans that received a temporary reference to the bean.
+								destroySingleton(beanName);
+								throw ex;
+							}
+						}
+					});
+					bean = getObjectForBeanInstance(sharedInstance, name, beanName, mbd);
+				}
+
+				else if (mbd.isPrototype()) {
+					// It's a prototype -&gt; create a new instance.
+					Object prototypeInstance = null;
+					try {
+						beforePrototypeCreation(beanName);
+						prototypeInstance = createBean(beanName, mbd, args);
+					}
+					finally {
+						afterPrototypeCreation(beanName);
+					}
+					bean = getObjectForBeanInstance(prototypeInstance, name, beanName, mbd);
+				}
+</code></pre>
+</div>
+<p>doGetBean对单例和多例的处理是不一样的，这里以单例为例。bean的创建最终交给了ObjectFactory的getObject方法，getObject调用createBean，createBean调用doCreateBean，doCreateBean先创建bean</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>		final Object bean = (instanceWrapper != null ? instanceWrapper.getWrappedInstance() : null);
+</code></pre>
+</div>
+<p>然后调用populateBean初始化bean，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	/**
+	 * Populate the bean instance in the given BeanWrapper with the property values
+	 * from the bean definition.
+	 * @param beanName the name of the bean
+	 * @param mbd the bean definition for the bean
+	 * @param bw BeanWrapper with bean instance
+	 */
+	protected void populateBean(String beanName, RootBeanDefinition mbd, BeanWrapper bw) {
+		PropertyValues pvs = mbd.getPropertyValues();
+
+		if (bw == null) {
+			if (!pvs.isEmpty()) {
+				throw new BeanCreationException(
+						mbd.getResourceDescription(), beanName, "Cannot apply property values to null instance");
+			}
+			else {
+				// Skip property population phase for null instance.
+				return;
+			}
+		}
+
+		// Give any InstantiationAwareBeanPostProcessors the opportunity to modify the
+		// state of the bean before properties are set. This can be used, for example,
+		// to support styles of field injection.
+		boolean continueWithPropertyPopulation = true;
+
+		if (!mbd.isSynthetic() &amp;&amp; hasInstantiationAwareBeanPostProcessors()) {
+			for (BeanPostProcessor bp : getBeanPostProcessors()) {
+				if (bp instanceof InstantiationAwareBeanPostProcessor) {
+					InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+					if (!ibp.postProcessAfterInstantiation(bw.getWrappedInstance(), beanName)) {
+						continueWithPropertyPopulation = false;
+						break;
+					}
+				}
+			}
+		}
+
+		if (!continueWithPropertyPopulation) {
+			return;
+		}
+
+		if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME ||
+				mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+			MutablePropertyValues newPvs = new MutablePropertyValues(pvs);
+
+			// Add property values based on autowire by name if applicable.
+			if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_NAME) {
+				autowireByName(beanName, mbd, bw, newPvs);
+			}
+
+			// Add property values based on autowire by type if applicable.
+			if (mbd.getResolvedAutowireMode() == RootBeanDefinition.AUTOWIRE_BY_TYPE) {
+				autowireByType(beanName, mbd, bw, newPvs);
+			}
+
+			pvs = newPvs;
+		}
+
+		boolean hasInstAwareBpps = hasInstantiationAwareBeanPostProcessors();
+		boolean needsDepCheck = (mbd.getDependencyCheck() != RootBeanDefinition.DEPENDENCY_CHECK_NONE);
+
+		if (hasInstAwareBpps || needsDepCheck) {
+			PropertyDescriptor[] filteredPds = filterPropertyDescriptorsForDependencyCheck(bw, mbd.allowCaching);
+			if (hasInstAwareBpps) {
+				for (BeanPostProcessor bp : getBeanPostProcessors()) {
+					if (bp instanceof InstantiationAwareBeanPostProcessor) {
+						InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+						pvs = ibp.postProcessPropertyValues(pvs, filteredPds, bw.getWrappedInstance(), beanName);
+						if (pvs == null) {
+							return;
+						}
+					}
+				}
+			}
+			if (needsDepCheck) {
+				checkDependencies(beanName, mbd, filteredPds, pvs);
+			}
+		}
+
+		applyPropertyValues(beanName, mbd, bw, pvs);
+	}
+</code></pre>
+</div>
+<p>先获取该bean配置的所有property。依次调用bean factory中各个post processor的postProcessAfterInstantiation方法，然后依次调用bean factory中各个post processor的postProcessPropertyValues方法。如果我们设置了 <strong><context:annotation-config></context:annotation-config></strong> ，则会在当前bean对应的类中查找带有 <strong>@Autowired</strong> 注解的field， 然后加载field对应的bean，然后进行注入操作。</p>
+
+<p>然后调用applyPropertyValues加载各个property对应的bean，同时注入到当前bean中，核心代码如下所示，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>		for (PropertyValue pv : original) {
+			if (pv.isConverted()) {
+				deepCopy.add(pv);
+			}
+			else {
+				String propertyName = pv.getName();
+				Object originalValue = pv.getValue();
+                // 1
+				Object resolvedValue = valueResolver.resolveValueIfNecessary(pv, originalValue);
+				Object convertedValue = resolvedValue;
+				boolean convertible = bw.isWritableProperty(propertyName) &amp;&amp;
+						!PropertyAccessorUtils.isNestedOrIndexedProperty(propertyName);
+				if (convertible) {
+					convertedValue = convertForProperty(resolvedValue, propertyName, bw, converter);
+				}
+				// Possibly store converted value in merged bean definition,
+				// in order to avoid re-conversion for every created bean instance.
+				if (resolvedValue == originalValue) {
+					if (convertible) {
+						pv.setConvertedValue(convertedValue);
+					}
+					deepCopy.add(pv);
+				}
+				else if (convertible &amp;&amp; originalValue instanceof TypedStringValue &amp;&amp;
+						!((TypedStringValue) originalValue).isDynamic() &amp;&amp;
+						!(convertedValue instanceof Collection || ObjectUtils.isArray(convertedValue))) {
+					pv.setConvertedValue(convertedValue);
+					deepCopy.add(pv);
+				}
+				else {
+					resolveNecessary = true;
+					deepCopy.add(new PropertyValue(pv, convertedValue));
+				}
+			}
+		}
+</code></pre>
+</div>
+<p>上面的代码1处获取到field的名称和值后，调用valueResolver的resolveValueIfNecessary获取需要注入到field的实际值。resolveValueIfNecessary根据value的不同类型，调用不同的解析函数，如果是自定义的类，则调用resolveReference。resolveReference内部则调用beanFactory的getBean方法递归加载当前bean所依赖的bean。</p>
+
+<p>populateBean设置完依赖之后，则调用initializeBean继续完成bean的初始化操作，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>	protected Object initializeBean(final String beanName, final Object bean, RootBeanDefinition mbd) {
+		if (System.getSecurityManager() != null) {
+			AccessController.doPrivileged(new PrivilegedAction&lt;Object&gt;() {
+				@Override
+				public Object run() {
+					invokeAwareMethods(beanName, bean);
+					return null;
+				}
+			}, getAccessControlContext());
+		}
+		else {
+			invokeAwareMethods(beanName, bean);
+		}
+
+		Object wrappedBean = bean;
+		if (mbd == null || !mbd.isSynthetic()) {
+            // 1
+			wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
+		}
+
+		try {
+            // 2
+			invokeInitMethods(beanName, wrappedBean, mbd);
+		}
+		catch (Throwable ex) {
+			throw new BeanCreationException(
+					(mbd != null ? mbd.getResourceDescription() : null),
+					beanName, "Invocation of init method failed", ex);
+		}
+
+		if (mbd == null || !mbd.isSynthetic()) {
+			wrappedBean = applyBeanPostProcessorsAfterInitialization(wrappedBean, beanName);
+		}
+		return wrappedBean;
+	}
+</code></pre>
+</div>
+
+<p>上面的代码主要完成两件事情，</p>
+<ol>
+  <li>调用bean factory中定义的post processor初始化当前bean。如果我们在当前bean对应的类中使用了 <strong>@PostConstruct</strong> 注解符，同时设置了 <strong><context:annotation-config></context:annotation-config></strong> ，则会调用注解符所在的函数进行初始化。对应上面的代码1</li>
+  <li>如果bean对应的类实现了InitializingBean接口，则调用afterPropertiesSet方法。如果bean在定义的时候指定了init-method，则调用init-method。对应上面的代码2</li>
+</ol>
+
+<p><strong><font color="red" size="5">至此spring的加载过程就完成了。</font></strong></p>
+

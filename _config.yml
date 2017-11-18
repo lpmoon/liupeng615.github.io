@@ -1,17 +1,29 @@
-# Setup
-title:        lpmoon的github blog 
-tagline:      "" 
-baseurl:      ""
-paginate:     1
+# Jekyll configuration
 
-# About/contact
-author:
-  name:       Author name
-  url:        http://yourhomepage.com 
+name: lpmoon 
+description: Welcome to my blog！
 
-# Gems
-gems:
-  - jekyll-paginate
+# url is currently only used only for the RSS feed in feed.xml
+url: https://github.com/lpmoon
 
-#Others
+# baseurl will often be '', but for a project page on gh-pages, it needs to
+# be the project name.
+# *** IMPORTANT: If your local "jekyll serve" throws errors change this to '' or
+#     run it like so: jekyll serve --baseurl=''
+baseurl: '/'
+## default date_format
+date_format: 
+  title: "%B-%-d-%Y"
+  archive: "%b"
+  categories: "%b-%Y"
+  tag: "%b-%Y"
+# Language
+lan: "en" 
+
+paginate: 10
+
+highlighter: rouge
 markdown: kramdown
+gems: ['jekyll-paginate']
+
+exclude: ['README.md', 'LICENSE', "*.bak"]

@@ -1,0 +1,137 @@
+<p>tomcat的业务处理交由线程池执行。</p>
+<h1 id="默认线程池">默认线程池</h1>
+
+<p>在默认情况下，如果用户不指定线程池，系统会创建默认的线程池，该线程池是org.apache.tomcat.util.threads.ThreadPoolExecutor的实现。具体的创建过程在AbstractEndpoint中，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    public void createExecutor() {
+        internalExecutor = true;
+        TaskQueue taskqueue = new TaskQueue();
+        TaskThreadFactory tf = new TaskThreadFactory(getName() + "-exec-", daemon, getThreadPriority());
+        executor = new ThreadPoolExecutor(getMinSpareThreads(), getMaxThreads(), 60, TimeUnit.SECONDS,taskqueue, tf);
+        taskqueue.setParent( (ThreadPoolExecutor) executor);
+    }
+</code></pre>
+</div>
+<p>线程的名字由Endpoint的名字加上”-exec-“组成，下面的图是debug tomcat的时候导出的线程镜像，可以看到几个http-nio-8080-exec开头的线程，</p>
+
+<p><img src="http://wx4.sinaimg.cn/mw690/87f5e2f6ly1fg520j3d2hj20ex05c0t3.jpg" alt="http://wx4.sinaimg.cn/mw690/87f5e2f6ly1fg520j3d2hj20ex05c0t3.jpg" />
+线程池的大小由getMinSpareThreads()和getMaxThreads()共同决定，getMinSpareThreads()决定了core size，getMaxThreads()决定了max size。默认情况下maxThreads = 200，minSpareThreads = 10。</p>
+
+<p>由于线程池的初始化在AbstractEndpoint中，所以如果用户不指定线程池，每个endpoint都会初始化自己的线程池。</p>
+
+<h1 id="用户指定线程池">用户指定线程池</h1>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    &lt;Executor name="tomcatThreadPool" namePrefix="catalina-exec-"
+        maxThreads="300" minSpareThreads="4"/&gt;
+        
+    &lt;Connector executor="tomcatThreadPool" port="8080" protocol="org.apache.coyote.http11.Http11NioProtocol"
+               connectionTimeout="20000"
+     redirectPort="8443" /&gt;
+</code></pre>
+</div>
+<p>如果server.xml中配置了上面的代码，那么tomcat会创建一个名为tomcatThreadPool的线程池，并且将8080对应的connector的线程池设置为tomcatThreadPool。线程池的初始化操作在Catalina的createStartDigester中，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>        //Executor
+        // #1
+        digester.addObjectCreate("Server/Service/Executor",
+                         "org.apache.catalina.core.StandardThreadExecutor",
+        // #2                 "className");
+        digester.addSetProperties("Server/Service/Executor");
+
+        // #3
+        digester.addSetNext("Server/Service/Executor",
+                            "addExecutor",
+                            "org.apache.catalina.Executor");
+</code></pre>
+</div>
+<p>#1和#2用于创建线程池，#3用于设置Service的线程池。而Endpoint中的线程池的设置通过下面的代码完成，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>        digester.addRule("Server/Service/Connector",
+                         new ConnectorCreateRule());
+</code></pre>
+</div>
+<p>ConnectorCreateRule的begin方法中完成了线程池的设置，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    @Override
+    public void begin(String namespace, String name, Attributes attributes)
+            throws Exception {
+        Service svc = (Service)digester.peek();
+        Executor ex = null;
+        if ( attributes.getValue("executor")!=null ) {
+            ex = svc.getExecutor(attributes.getValue("executor"));
+        }
+        Connector con = new Connector(attributes.getValue("protocol"));
+        if (ex != null) {
+            setExecutor(con, ex);
+        }
+        String sslImplementationName = attributes.getValue("sslImplementationName");
+        if (sslImplementationName != null) {
+            setSSLImplementationName(con, sslImplementationName);
+        }
+        digester.push(con);
+    }
+
+    private static void setExecutor(Connector con, Executor ex) throws Exception {
+        Method m = IntrospectionUtils.findMethod(con.getProtocolHandler().getClass(),"setExecutor",new Class[] {java.util.concurrent.Executor.class});
+        if (m!=null) {
+            m.invoke(con.getProtocolHandler(), new Object[] {ex});
+        }else {
+            log.warn(sm.getString("connector.noSetExecutor", con));
+        }
+    }
+</code></pre>
+</div>
+<p>如果Connector配置了属性executor，那么则从Service中获取对应名字的线程池，然后通过反射机制设置Endpoint的线程池。设置开头的配置后，debug tomcat，可以看到处理请求时获取到的线程池如下所示，core size为4，max size为300，线程以catalina-exec-开头，</p>
+
+<p><img src="http://wx4.sinaimg.cn/mw690/87f5e2f6ly1fg53e309lqj214v0armya.jpg" alt="http://wx4.sinaimg.cn/mw690/87f5e2f6ly1fg53e309lqj214v0armya.jpg" /></p>
+
+<h1 id="standardthreadexecutor">StandardThreadExecutor</h1>
+
+<p>StandardThreadExecutor实现了jdk内部的Executor接口，并且继承了tomcat内部的LifecycleMBeanBase。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    /**
+     * Default name prefix for the thread name
+     */
+    protected String namePrefix = "tomcat-exec-";
+
+    /**
+     * max number of threads
+     */
+    protected int maxThreads = 200;
+
+    /**
+     * min number of threads
+     */
+    protected int minSpareThreads = 25;
+
+    /**
+     * idle time in milliseconds
+     */
+    protected int maxIdleTime = 60000;
+</code></pre>
+</div>
+<p>线程池的线程名以tomcat-exec-开头，默认的core size为25，max size为200，最大空闲时间为60000。总的来说其行为和jdk内部的其他实现基本一致，不同的地方是其使用的队列是tomcat自己实现的TaskQueue。通过TaskQueue，tomcat改变了jdk默认线程池的行为</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>当设置了有界队列的时候，任务会先进入到队列中，等到队列满了之后才会启动core size之后的其他线程。
+</code></pre>
+</div>
+<p>修改后的行为是</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>当线程池线程总数小于配置的最大线程数的时候，就会启动线程，任务队列提交任务会直接返回false。
+</code></pre>
+</div>
+<p>这样做的好处是可以尽快的启动非core的线程，充分利用线程资源。TaskQueue提交任务的代码是，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    @Override
+    public boolean offer(Runnable o) {
+      //we can't do any checks
+        if (parent==null) return super.offer(o);
+        //we are maxed out on threads, simply queue the object
+        if (parent.getPoolSize() == parent.getMaximumPoolSize()) return super.offer(o);
+        //we have idle threads, just add it to the queue
+        if (parent.getSubmittedCount()&lt;(parent.getPoolSize())) return super.offer(o);
+        //if we have less threads than maximum force creation of a new thread
+        if (parent.getPoolSize()&lt;parent.getMaximumPoolSize()) return false;
+        //if we reached here, we need to add it to the queue
+        return super.offer(o);
+    }
+</code></pre>
+</div>
+<p>通过下面的代码</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>if (parent.getPoolSize()&lt;parent.getMaximumPoolSize()) return false;
+</code></pre>
+</div>
+<p>模拟了队列满的情况，这就使得core size之外的线程尽快启动</p>

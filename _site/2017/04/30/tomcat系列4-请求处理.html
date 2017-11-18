@@ -1,0 +1,685 @@
+<p>tomcat在协议解析之后会进入到请求处理阶段，请求处理大致可以分为几个阶段:</p>
+<ol>
+  <li>请求预处理 prepareRequest</li>
+  <li>请求预处理结束后，进入到postParseRequest阶段，这个阶段会查找请求对应的host, context, wrapper。</li>
+  <li>请求处理阶段</li>
+</ol>
+
+<h1 id="preparerequest">prepareRequest</h1>
+<p>预处理阶段主要包括以下几个阶段，</p>
+
+<ul>
+  <li>检查协议，如果协议非法，则返回505</li>
+  <li>如果header中包含connection，并且是Keep-alive，则设置keepAlive为true</li>
+  <li>如果header中包含expect，并且是100-continue，则设置对应状态为，如果不包含100-continue，则返回417</li>
+  <li>检查user-agent</li>
+  <li>检查url</li>
+  <li>如果header中包含transfer-encoding，如果transfer-encoding合法，则把对应的filter添加到inputBuffer中，否则返回501</li>
+  <li>如果设置了content-length，并且设置了transfer-encoding为chunked，则把header中的content-length移除，因为chunked模式下不允许设置content-length。如果设置了content-length，并且不是chunked，则为inputBuffer添加IdentityInputFilter</li>
+  <li>检查header中是否有host，如果没有则返回400。</li>
+</ul>
+
+<p>预处理结束后，如果没有错误码被设置，则进入到对应的adapter的service方法中进行处理，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>            // Process the request in the adapter
+            if (!getErrorState().isError()) {
+                try {
+                    rp.setStage(org.apache.coyote.Constants.STAGE_SERVICE);
+                    getAdapter().service(request, response);
+                    // Handle when the response was committed before a serious
+                    // error occurred.  Throwing a ServletException should both
+                    // set the status to 500 and set the errorException.
+                    // If we fail here, then the response is likely already
+                    // committed, so we can't try and set headers.
+                    if(keepAlive &amp;&amp; !getErrorState().isError() &amp;&amp; !isAsync() &amp;&amp;
+                            statusDropsConnection(response.getStatus())) {
+                        setErrorState(ErrorState.CLOSE_CLEAN, null);
+                    }
+                } catch (InterruptedIOException e) {
+                } catch (HeadersTooLargeException e) {
+                } catch (Throwable t) {
+                }
+            }
+</code></pre>
+</div>
+<p>在默认的情况下这个adapter都是CoyoteAdapter的实例，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    @Override
+    public void service(org.apache.coyote.Request req,
+                        org.apache.coyote.Response res)
+        throws Exception {
+
+        Request request = (Request) req.getNote(ADAPTER_NOTES);
+        Response response = (Response) res.getNote(ADAPTER_NOTES);
+
+        if (request == null) {
+
+            // Create objects
+            request = connector.createRequest();
+            request.setCoyoteRequest(req);
+            response = connector.createResponse();
+            response.setCoyoteResponse(res);
+
+            // Link objects
+            request.setResponse(response);
+            response.setRequest(request);
+
+            // Set as notes
+            req.setNote(ADAPTER_NOTES, request);
+            res.setNote(ADAPTER_NOTES, response);
+
+            // Set query string encoding
+            req.getParameters().setQueryStringEncoding
+                (connector.getURIEncoding());
+
+        }
+
+        if (connector.getXpoweredBy()) {
+            response.addHeader("X-Powered-By", POWERED_BY);
+        }
+
+        boolean async = false;
+        boolean postParseSuccess = false;
+
+        try {
+            // Parse and set Catalina and configuration specific
+            // request parameters
+            req.getRequestProcessor().setWorkerThreadName(THREAD_NAME.get());
+            postParseSuccess = postParseRequest(req, request, res, response);
+            if (postParseSuccess) {
+                //check valves if we support async
+                request.setAsyncSupported(connector.getService().getContainer().getPipeline().isAsyncSupported());
+                // Calling the container
+                connector.getService().getContainer().getPipeline().getFirst().invoke(request, response);
+            }
+            if (request.isAsync()) {
+                async = true;
+                ReadListener readListener = req.getReadListener();
+                if (readListener != null &amp;&amp; request.isFinished()) {
+                    // Possible the all data may have been read during service()
+                    // method so this needs to be checked here
+                    ClassLoader oldCL = null;
+                    try {
+                        oldCL = request.getContext().bind(false, null);
+                        if (req.sendAllDataReadEvent()) {
+                            req.getReadListener().onAllDataRead();
+                        }
+                    } finally {
+                        request.getContext().unbind(false, oldCL);
+                    }
+                }
+
+                Throwable throwable =
+                        (Throwable) request.getAttribute(RequestDispatcher.ERROR_EXCEPTION);
+
+                // If an async request was started, is not going to end once
+                // this container thread finishes and an error occurred, trigger
+                // the async error process
+                if (!request.isAsyncCompleting() &amp;&amp; throwable != null) {
+                    request.getAsyncContextInternal().setErrorState(throwable, true);
+                }
+            } else {
+                request.finishRequest();
+                response.finishResponse();
+            }
+
+        } catch (IOException e) {
+            // Ignore
+        } finally {
+        }
+    }
+</code></pre>
+</div>
+<p>service方法首先会创建request和response，这里创建的request和response实现了标准的HttpServletRequest和HttpServletResponse。然后调用postParseRequest继续进行预处理</p>
+
+<h1 id="postparserequest">postParseRequest</h1>
+<p>postParseRequest很长，需要对其进行分解，</p>
+<h5 id="1-处理url为的情况">1. 处理url为*的情况</h5>
+
+<p>当url为*的时候，如果method为options，则返回tomcat支持的所有method，需要注意的TRACE method需要特殊配置才会出现在返回列表中，也就是说一般情况下不允许用户执行TRACE操作，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>        // Check for ping OPTIONS * request
+        if (undecodedURI.equals("*")) {
+            if (req.method().equalsIgnoreCase("OPTIONS")) {
+                StringBuilder allow = new StringBuilder();
+                allow.append("GET, HEAD, POST, PUT, DELETE");
+                // Trace if allowed
+                if (connector.getAllowTrace()) {
+                    allow.append(", TRACE");
+                }
+                // Always allow options
+                allow.append(", OPTIONS");
+                res.setHeader("Allow", allow.toString());
+            } else {
+                res.setStatus(404);
+                res.setMessage("Not found");
+            }
+            connector.getService().getContainer().logAccess(
+                    request, response, 0, true);
+            return false;
+        }
+</code></pre>
+</div>
+<h5 id="2-解析url">2. 解析url</h5>
+
+<p>如果url满足/path;a=b这种类型，则需要将a=b解析出来，a作为参数名，b作为参数值。需要注意的是这里的参数和querystring不同。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>        MessageBytes decodedURI = req.decodedURI();
+
+        if (undecodedURI.getType() == MessageBytes.T_BYTES) {
+            // Copy the raw URI to the decodedURI
+            decodedURI.duplicate(undecodedURI);
+
+            // Parse the path parameters. This will:
+            //   - strip out the path parameters
+            //   - convert the decodedURI to bytes
+            parsePathParameters(req, request);
+
+            // URI decoding
+            // %xx decoding of the URL
+            try {
+                req.getURLDecoder().convert(decodedURI, false);
+            } catch (IOException ioe) {
+
+            }
+            // Normalization
+            if (!normalize(req.decodedURI())) {
+
+            }
+            // Character decoding
+            convertURI(decodedURI, request);
+            // Check that the URI is still normalized
+            if (!checkNormalize(req.decodedURI())) {
+
+            }
+        } else {
+            /* The URI is chars or String, and has been sent using an in-memory
+             * protocol handler. The following assumptions are made:
+             * - req.requestURI() has been set to the 'original' non-decoded,
+             *   non-normalized URI
+             * - req.decodedURI() has been set to the decoded, normalized form
+             *   of req.requestURI()
+             */
+            decodedURI.toChars();
+            // Remove all path parameters; any needed path parameter should be set
+            // using the request object rather than passing it in the URL
+            CharChunk uriCC = decodedURI.getCharChunk();
+            int semicolon = uriCC.indexOf(';');
+            if (semicolon &gt; 0) {
+                decodedURI.setChars
+                    (uriCC.getBuffer(), uriCC.getStart(), semicolon);
+            }
+        }
+</code></pre>
+</div>
+<div class="highlighter-rouge"><pre class="highlight"><code>    /**
+     * Extract the path parameters from the request. This assumes parameters are
+     * of the form /path;name=value;name2=value2/ etc. Currently only really
+     * interested in the session ID that will be in this form. Other parameters
+     * can safely be ignored.
+     */
+    protected void parsePathParameters(org.apache.coyote.Request req, Request request) {
+</code></pre>
+</div>
+<h5 id="3-查找host-context-wrapper">3. 查找Host, Context, Wrapper</h5>
+<div class="highlighter-rouge"><pre class="highlight"><code>            connector.getService().getMapper().map(serverName, decodedURI,
+                    version, request.getMappingData());
+</code></pre>
+</div>
+<p>根据connector获取service，然后从service获取mapper，调用mapper的map方法进行对应的查找。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>public void map(MessageBytes host, MessageBytes uri, String version,
+                    MappingData mappingData) throws IOException {
+
+        if (host.isNull()) {
+            host.getCharChunk().append(defaultHostName);
+        }
+        host.toChars();
+        uri.toChars();
+        internalMap(host.getCharChunk(), uri.getCharChunk(), version,
+                mappingData);
+    }
+</code></pre>
+</div>
+<ul>
+  <li>查找host</li>
+</ul>
+
+<p>internalMap首先会调用exactFindIgnoreCase来进行查找对应的host。mapper中的Host按照名称的字符序进行了排序，所以使用serverName查找的时候使用的二分查找，这是tomcat为了效率而做的优化。如果没有查找到对应的host，则会进行下面的处理，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>        if (mappedHost == null) {
+            // Note: Internally, the Mapper does not use the leading * on a
+            //       wildcard host. This is to allow this shortcut.
+            int firstDot = host.indexOf('.');
+            if (firstDot &gt; -1) {
+                int offset = host.getOffset();
+                try {
+                    host.setOffset(firstDot + offset);
+                    mappedHost = exactFindIgnoreCase(hosts, host);
+                } finally {
+                    // Make absolutely sure this gets reset
+                    host.setOffset(offset);
+                }
+            }
+            if (mappedHost == null) {
+                mappedHost = defaultHost;
+                if (mappedHost == null) {
+                    return;
+                }
+            }
+        }
+</code></pre>
+</div>
+<p>tomcat会尝试将serverName做变换，截取第一个”.”后面的数据再一次进行匹配，如果找不到则会设置默认的host，如果没有默认的host，则会结束映射过程。
+经过上面的一系列处理后找到了host，则设置对应关系，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>mappingData.host = mappedHost.object;
+</code></pre>
+</div>
+<p>找到了host之后，tomcat会继续根据url查找host中的context。</p>
+
+<ul>
+  <li>查找Context</li>
+</ul>
+
+<p>context查找过程与host查找类似，都是通过二分查找。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>        ContextList contextList = mappedHost.contextList;
+        MappedContext[] contexts = contextList.contexts;
+        int pos = find(contexts, uri);
+        if (pos == -1) {
+            return;
+        }
+</code></pre>
+</div>
+<p>如果pos&gt;=0，则会进入下面的代码进行精确的匹配，这是因为通过find查找到的可能是最近接uri的context。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>        while (pos &gt;= 0) {
+            context = contexts[pos];
+            if (uri.startsWith(context.name)) {
+                length = context.name.length();
+                // #1
+                if (uri.getLength() == length) {
+                    found = true;
+                    break;
+                } else if (uri.startsWithIgnoreCase("/", length)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (lastSlash == -1) {
+                lastSlash = nthSlash(uri, contextList.nesting + 1);
+            } else {
+                lastSlash = lastSlash(uri);
+            }
+            uri.setEnd(lastSlash);
+            pos = find(contexts, uri);
+        }
+</code></pre>
+</div>
+<p>上面代码的#1处就是精确匹配的代码，如果url的长度和context.name的长度一致就直接认为匹配成功。否则判断url的第length位是否是”/”，如果是则认为匹配成功。如果匹配不成功，则会对url做处理，查找出url中第contextList.nesting+1个”/”所在的位置，然后以这个位置作为结束符截断url，进行下一轮查找。Context查找之后会进行Wrapper的查找，Wrapper是对Servlet的封装。</p>
+
+<ul>
+  <li>查找Wrapper</li>
+</ul>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>        // Wrapper mapping
+        if (!contextVersion.isPaused()) {
+            internalMapWrapper(contextVersion, uri, mappingData);
+        }
+</code></pre>
+</div>
+<p>具体的查找过程在internalMapWrapper中，首先会根据匹配出的Context和url，提取出Servelt对应的名字。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>        int pathOffset = path.getOffset();
+        int pathEnd = path.getEnd();
+        boolean noServletPath = false;
+
+        int length = contextVersion.path.length();
+        if (length == (pathEnd - pathOffset)) {
+            noServletPath = true;
+        }
+        int servletPath = pathOffset + length;
+        path.setOffset(servletPath);
+</code></pre>
+</div>
+<p>然后根据对应的规则查找Wrapper，</p>
+
+<p><strong>规则1 精准匹配</strong></p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>    /**
+     * Exact mapping.
+     */
+    private final void internalMapExactWrapper
+        (MappedWrapper[] wrappers, CharChunk path, MappingData mappingData) {
+        MappedWrapper wrapper = exactFind(wrappers, path);
+        if (wrapper != null) {
+            mappingData.requestPath.setString(wrapper.name);
+            mappingData.wrapper = wrapper.object;
+            if (path.equals("/")) {
+                // Special handling for Context Root mapped servlet
+                mappingData.pathInfo.setString("/");
+                mappingData.wrapperPath.setString("");
+                // This seems wrong but it is what the spec says...
+                mappingData.contextPath.setString("");
+                mappingData.matchType = MappingMatch.CONTEXT_ROOT;
+            } else {
+                mappingData.wrapperPath.setString(wrapper.name);
+                mappingData.matchType = MappingMatch.EXACT;
+            }
+        }
+    }
+</code></pre>
+</div>
+<p>exactFind查找对应的Wrapper后会进一步判断path是否等于”/”，如果相等则设置matchType为CONTEXT_ROOT，否则设置为EXACT</p>
+
+<p><strong>规则2 前缀匹配</strong></p>
+
+<p>如果规则1没有查找到，则会使用前缀匹配。所谓的前缀匹配是指Servlet配置的url是”/aaa/bb/<em>“这种带有通配符的url，需要注意的是”/aaa/</em>/bb”这种不属于前缀匹配而应该是精准匹配。前缀匹配的规则存放在wildcardWrappers中，如果我们设置的url规则是”/aaa/bb/*“，那么在wildcardWrappers中存放的就是”/aaa/bb”，如果用户访问的path是”/aaa/bb/ccc”，就会匹配成功。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>        // Rule 2 -- Prefix Match
+        boolean checkJspWelcomeFiles = false;
+        MappedWrapper[] wildcardWrappers = contextVersion.wildcardWrappers;
+        if (mappingData.wrapper == null) {
+            internalMapWildcardWrapper(wildcardWrappers, contextVersion.nesting,
+                                       path, mappingData);
+            if (mappingData.wrapper != null &amp;&amp; mappingData.jspWildCard) {
+                char[] buf = path.getBuffer();
+                if (buf[pathEnd - 1] == '/') {
+                    mappingData.wrapper = null;
+                    checkJspWelcomeFiles = true;
+                } else {
+                    // See Bugzilla 27704
+                    mappingData.wrapperPath.setChars(buf, path.getStart(),
+                                                     path.getLength());
+                    mappingData.pathInfo.recycle();
+                }
+            }
+        }
+
+        if(mappingData.wrapper == null &amp;&amp; noServletPath &amp;&amp;
+                contextVersion.object.getMapperContextRootRedirectEnabled()) {
+            // The path is empty, redirect to "/"
+            path.append('/');
+            pathEnd = path.getEnd();
+            mappingData.redirectPath.setChars
+                (path.getBuffer(), pathOffset, pathEnd - pathOffset);
+            path.setEnd(pathEnd - 1);
+            return;
+        }
+</code></pre>
+</div>
+
+<p><strong>规则3 扩展匹配</strong></p>
+
+<p>如果精确匹配和前缀匹配都没有成功，则进入扩展匹配。所谓的扩展匹配是指Servlet配置的url是”<em>.json”这种带有后缀扩展的url。扩展匹配的规则存放在extensionWrappers中，默认情况下extensionWrappers会有两个规则，一个用于匹配所有jsp的，一个用于匹配所有jspx的。如果我们设置的url规则是”</em>.json”，那么extensionWrappers中就会新增一个匹配规则匹配所有以json结尾的请求。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>        // Rule 3 -- Extension Match
+        MappedWrapper[] extensionWrappers = contextVersion.extensionWrappers;
+        if (mappingData.wrapper == null &amp;&amp; !checkJspWelcomeFiles) {
+            internalMapExtensionWrapper(extensionWrappers, path, mappingData,
+                    true);
+        }
+</code></pre>
+</div>
+
+<p><strong>规则4 默认欢迎页</strong></p>
+
+<p>如果访问路径是/，那么会分别尝试在/后面添加index.jsp，index.html或者index.htm，然后尝试使用精确匹配和前缀匹配等规则进行匹配。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>                    // Rule 4a -- Welcome resources processing for exact macth
+                    internalMapExactWrapper(exactWrappers, path, mappingData);
+
+                    // Rule 4b -- Welcome resources processing for prefix match
+                    if (mappingData.wrapper == null) {
+                        internalMapWildcardWrapper
+                            (wildcardWrappers, contextVersion.nesting,
+                             path, mappingData);
+                    }
+                    
+                    // Rule 4c -- Welcome resources processing
+                    //            for physical folder
+                    if (mappingData.wrapper == null
+                        &amp;&amp; contextVersion.resources != null) {
+                        String pathStr = path.toString();
+                        WebResource file =
+                                contextVersion.resources.getResource(pathStr);
+                        if (file != null &amp;&amp; file.isFile()) {
+                            internalMapExtensionWrapper(extensionWrappers, path,
+                                                        mappingData, true);
+                            if (mappingData.wrapper == null
+                                &amp;&amp; contextVersion.defaultWrapper != null) {
+                                mappingData.wrapper =
+                                    contextVersion.defaultWrapper.object;
+                                mappingData.requestPath.setChars
+                                    (path.getBuffer(), path.getStart(),
+                                     path.getLength());
+                                mappingData.wrapperPath.setChars
+                                    (path.getBuffer(), path.getStart(),
+                                     path.getLength());
+                                mappingData.requestPath.setString(pathStr);
+                                mappingData.wrapperPath.setString(pathStr);
+                            }
+                        }
+                    }
+</code></pre>
+</div>
+<p>在规则4c中会尝试访问物理路径的文件。</p>
+
+<p><strong>规则5 默认Wrapper</strong></p>
+
+<p>如果以上规则都没有匹配成功，则会使用默认的Wrapper，默认的Wrapper封装了org.apache.catalina.servlets.DefaultServlet。</p>
+
+<h5 id="4-转发">4. 转发</h5>
+<p>在解析context, wrapper的时候有可能会设置redirectPath，这时候tomcat返回302</p>
+
+<h5 id="5-处理trace请求">5. 处理trace请求</h5>
+<p>如果服务器设置了不允许trace，并且当前请求是trace，则返回405</p>
+
+<h1 id="请求处理">请求处理</h1>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>connector.getService().getContainer().getPipeline().getFirst().invoke(request, response);
+</code></pre>
+</div>
+<p>获取service中的Container，这时候Container是StandardEngine。然后获取pipeline，此时pipeline中是StandardEngineValve，然后调用StandardEngineValve的invoke方法。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    public final void invoke(Request request, Response response)
+        throws IOException, ServletException {
+
+        // Select the Host to be used for this Request
+        Host host = request.getHost();
+        if (host == null) {
+            response.sendError
+                (HttpServletResponse.SC_BAD_REQUEST,
+                 sm.getString("standardEngine.noHost",
+                              request.getServerName()));
+            return;
+        }
+        if (request.isAsyncSupported()) {
+            request.setAsyncSupported(host.getPipeline().isAsyncSupported());
+        }
+
+        // Ask this Host to process this request
+        host.getPipeline().getFirst().invoke(request, response);
+
+    }
+</code></pre>
+</div>
+<p>获取Host之后，依次获取Host的pipeline，pipeline中的第一个valve，调用invoke继续处理。此时pipeline的first是AccessLogValve，AccessLogValve的invoke方法主要负责调用下一个valve，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    @Override
+    public void invoke(Request request, Response response) throws IOException,
+            ServletException {
+        getNext().invoke(request, response);
+    }
+</code></pre>
+</div>
+<p>AccessLogValue的下一个valve是ErrorReportValue，ErrorReportValue首先调用下一个value继续处理，等处理结束后判断response.getStatus()是否是大于等400的或者抛出了错误，如果是则返回相应的错误信息。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    @Override
+    public void invoke(Request request, Response response) throws IOException, ServletException {
+
+        // Perform the request
+        getNext().invoke(request, response);
+
+        if (response.isCommitted()) {
+            if (response.setErrorReported()) {
+                // Error wasn't previously reported but we can't write an error
+                // page because the response has already been committed. Attempt
+                // to flush any data that is still to be written to the client.
+                try {
+                    response.flushBuffer();
+                } catch (Throwable t) {
+                    ExceptionUtils.handleThrowable(t);
+                }
+                // Close immediately to signal to the client that something went
+                // wrong
+                response.getCoyoteResponse().action(ActionCode.CLOSE_NOW, null);
+            }
+            return;
+        }
+
+        Throwable throwable = (Throwable) request.getAttribute(RequestDispatcher.ERROR_EXCEPTION);
+
+        // If an async request is in progress and is not going to end once this
+        // container thread finishes, do not process any error page here.
+        if (request.isAsync() &amp;&amp; !request.isAsyncCompleting()) {
+            return;
+        }
+
+        if (throwable != null &amp;&amp; !response.isError()) {
+            // Make sure that the necessary methods have been called on the
+            // response. (It is possible a component may just have set the
+            // Throwable. Tomcat won't do that but other components might.)
+            // These are safe to call at this point as we know that the response
+            // has not been committed.
+            response.reset();
+            response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+        }
+
+        // One way or another, response.sendError() will have been called before
+        // execution reaches this point and suspended the response. Need to
+        // reverse that so this valve can write to the response.
+        response.setSuspended(false);
+
+        try {
+            report(request, response, throwable);
+        } catch (Throwable tt) {
+            ExceptionUtils.handleThrowable(tt);
+        }
+    }
+</code></pre>
+</div>
+<p>ErrorReportValue的下一个valve是StandardHostValve，StandardHostValve首先会获取request对应的Context, 然后调用StandardContextValve的invoke进行处理。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    public final void invoke(Request request, Response response)
+        throws IOException, ServletException {
+
+        // Disallow any direct access to resources under WEB-INF or META-INF
+        MessageBytes requestPathMB = request.getRequestPathMB();
+        if ((requestPathMB.startsWithIgnoreCase("/META-INF/", 0))
+                || (requestPathMB.equalsIgnoreCase("/META-INF"))
+                || (requestPathMB.startsWithIgnoreCase("/WEB-INF/", 0))
+                || (requestPathMB.equalsIgnoreCase("/WEB-INF"))) {
+            response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+
+        // Select the Wrapper to be used for this Request
+        Wrapper wrapper = request.getWrapper();
+        if (wrapper == null || wrapper.isUnavailable()) {
+            response.sendError(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+
+        // Acknowledge the request
+        try {
+            response.sendAcknowledgement();
+        } catch (IOException ioe) {
+            container.getLogger().error(sm.getString(
+                    "standardContextValve.acknowledgeException"), ioe);
+            request.setAttribute(RequestDispatcher.ERROR_EXCEPTION, ioe);
+            response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            return;
+        }
+
+        if (request.isAsyncSupported()) {
+            request.setAsyncSupported(wrapper.getPipeline().isAsyncSupported());
+        }
+        wrapper.getPipeline().getFirst().invoke(request, response);
+    }
+</code></pre>
+</div>
+<p>上面代码主要分为以下几个部分，</p>
+
+<ul>
+  <li>对于直接访问WEB-INF和META-INF下面资源的请求返回404</li>
+  <li>如果没有wrapper则返回404</li>
+  <li>调用StandardWrapperValve继续处理</li>
+</ul>
+
+<p>StandardWrapper会根据配置的filter，创建filter chain，然后调用filter chain中的每一个filter对request进行预处理，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>    private void internalDoFilter(ServletRequest request,
+                                  ServletResponse response)
+        throws IOException, ServletException {
+
+        // Call the next filter if there is one
+        if (pos &lt; n) {
+            ApplicationFilterConfig filterConfig = filters[pos++];
+            try {
+                Filter filter = filterConfig.getFilter();
+
+                if (request.isAsyncSupported() &amp;&amp; "false".equalsIgnoreCase(
+                        filterConfig.getFilterDef().getAsyncSupported())) {
+                    request.setAttribute(Globals.ASYNC_SUPPORTED_ATTR, Boolean.FALSE);
+                }
+                if( Globals.IS_SECURITY_ENABLED ) {
+                    final ServletRequest req = request;
+                    final ServletResponse res = response;
+                    Principal principal =
+                        ((HttpServletRequest) req).getUserPrincipal();
+
+                    Object[] args = new Object[]{req, res, this};
+                    SecurityUtil.doAsPrivilege ("doFilter", filter, classType, args, principal);
+                } else {
+                    // #1
+                    filter.doFilter(request, response, this);
+                }
+            } catch (IOException | ServletException | RuntimeException e) {
+                throw e;
+            } catch (Throwable e) {
+                e = ExceptionUtils.unwrapInvocationTargetException(e);
+                ExceptionUtils.handleThrowable(e);
+                throw new ServletException(sm.getString("filterChain.filter"), e);
+            }
+            return;
+        }
+
+        // We fell off the end of the chain -- call the servlet instance
+        try {
+            if (ApplicationDispatcher.WRAP_SAME_OBJECT) {
+                lastServicedRequest.set(request);
+                lastServicedResponse.set(response);
+            }
+
+            if (request.isAsyncSupported() &amp;&amp; !servletSupportsAsync) {
+                request.setAttribute(Globals.ASYNC_SUPPORTED_ATTR,
+                        Boolean.FALSE);
+            }
+            // Use potentially wrapped request from this point
+            if ((request instanceof HttpServletRequest) &amp;&amp;
+                    (response instanceof HttpServletResponse) &amp;&amp;
+                    Globals.IS_SECURITY_ENABLED ) {
+                final ServletRequest req = request;
+                final ServletResponse res = response;
+                Principal principal =
+                    ((HttpServletRequest) req).getUserPrincipal();
+                Object[] args = new Object[]{req, res};
+                SecurityUtil.doAsPrivilege("service",
+                                           servlet,
+                                           classTypeUsedInService,
+                                           args,
+                                           principal);
+            } else {
+                // #2
+                servlet.service(request, response);
+            }
+        } catch (IOException | ServletException | RuntimeException e) {
+            throw e;
+        } catch (Throwable e) {
+            e = ExceptionUtils.unwrapInvocationTargetException(e);
+            ExceptionUtils.handleThrowable(e);
+            throw new ServletException(sm.getString("filterChain.servlet"), e);
+        } finally {
+            if (ApplicationDispatcher.WRAP_SAME_OBJECT) {
+                lastServicedRequest.set(null);
+                lastServicedResponse.set(null);
+            }
+        }
+    }
+</code></pre>
+</div>
+<p>在上面的#1处会逐个调用filter。当所有filter处理结束后调用对应的Servlet做处理，如上面代码#2处所示。到这里request的处理基本上就结束了。</p>

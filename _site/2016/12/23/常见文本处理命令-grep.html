@@ -1,0 +1,376 @@
+<p>grep用于在特定的文本中查找包含有特定模式字符串的行，并且输出到终端中。而grep为我们提供了丰富的参数，满足不同的条件。在介绍下面的参数的时候，会采用实际的例子，为了能运行下面的例子，你需要做如下操作:</p>
+
+<ul>
+  <li>新建文件test</li>
+  <li>将以下文本写入到test中</li>
+</ul>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>11111111
+11112222
+22222222
+"112233"
+</code></pre>
+</div>
+
+<h2 id="常用的参数">常用的参数</h2>
+<h3 id="-e-extended-regexp">-E, –extended-regexp</h3>
+<p><em>使用扩展的正则表达式作为匹配条件</em></p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -E "[1]+" test    # 查找含有一到多个连续1的行
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>11111111
+11112222
+"112233"
+</code></pre>
+</div>
+<h3 id="-f-fixed-strings">-F, –fixed-strings</h3>
+<p><em>使用特定的字符串作为匹配条件</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -F "11111" test    # 查找带有11111的行
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>11111111
+</code></pre>
+</div>
+<h3 id="-g-basic-regexp">-G, –basic-regexp</h3>
+<p><em>使用基础的正则表达式作为匹配条件</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -G "[1]+" test  # 查找含有一个到多个连续1的行
+</code></pre>
+</div>
+<p>上面的例子在ubuntu16.04上面没有任何输出，如果替换成</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -G "[1]*" test
+</code></pre>
+</div>
+<p>则会有如下输出，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>11111111
+11112222
+22222222
+"112233"
+</code></pre>
+</div>
+<p>可见在某些系统上-G的功能要弱于-E。</p>
+
+<h3 id="-p-perl-regexp">-P, –perl-regexp</h3>
+<p><em>使用perl正则表达式作为匹配条件</em>， 这个参数属于实验性质的，不建议使用。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -P "[1]+" test  # 查找含有一个到多个连续1的行
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>11111111
+11112222
+"112233"
+</code></pre>
+</div>
+
+<h3 id="-e">-e</h3>
+<p><em>-e pattern 指定pattern为匹配条件</em>，可以使用多个-e表示或者的关系。</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -e "11" -e "22" test   # 查找含有11或者22的行
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>11111111
+11112222
+22222222
+"112233"
+</code></pre>
+</div>
+
+<h3 id="-f">-f</h3>
+<p><em>从文件中读取匹配条件，文件中的每一行都是匹配条件，为或的关系，相当于使用多个-e参数。</em></p>
+
+<p>新建文件file, 在文件中写入如下数据</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>11
+22
+</code></pre>
+</div>
+<p>运行</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -f file test
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>11111111
+11112222
+22222222
+"112233"
+</code></pre>
+</div>
+<p>这与参数-e的列子达到了相同的效果，与-e相同的是-f也可以指定多个文件。</p>
+
+<h3 id="-i-ignore-case">-i, –ignore-case</h3>
+<p><em>忽略大小写</em>
+在test文件中新增行<code class="highlighter-rouge">aaaaaaaa</code>，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep "AAAA" test
+</code></pre>
+</div>
+<p>和</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -i "AAAA" test
+</code></pre>
+</div>
+<p>会得到不同的结果，后者会将最后一行输出。</p>
+
+<h3 id="-v-invert-match">-v, –invert-match</h3>
+<p><em>选出不满足匹配条件的行</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -v "1111" test  # 选出不包含1111的行
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>22222222
+"112233"
+aaaaaaaa
+</code></pre>
+</div>
+
+<h3 id="-w-word-regexp">-w, –word-regexp</h3>
+<p><em>将匹配条件作为一个单词，所匹配的行必须恰好包含该单词而不是仅仅包含该子串</em>， 
+在test文件中新增行 <code class="highlighter-rouge">words hhh</code>,</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -w "word" test 
+</code></pre>
+</div>
+<p>将不会输出任何数据，如果想匹配出<code class="highlighter-rouge">words hhh</code>
+需要将匹配条件修改为</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -w "words" test
+</code></pre>
+</div>
+
+<h3 id="-x-line-regexp">-x, –line-regexp</h3>
+<p><em>将匹配条件当做一行，所匹配的行必须恰好与匹配条件相同</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -x "words" test
+</code></pre>
+</div>
+<p>将不会有任何输出，如果相匹配出<code class="highlighter-rouge">words hhh</code>需要将匹配条件修改为</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -x "words hhh" test
+</code></pre>
+</div>
+
+<h3 id="-c-count">-c, –count</h3>
+<p><em>打印出匹配的行数，如果带有-v参数，则表示不匹配的行数</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -c "11" test
+</code></pre>
+</div>
+<p>输出 <code class="highlighter-rouge">3</code></p>
+
+<h3 id="color">–color</h3>
+<p><em>–color[=when]，用于高亮显示。 when可以是never, always, auto</em></p>
+
+<h3 id="-l-files-without-match">-L, –files-without-match</h3>
+<p><em>打印出不满足匹配条件的文件</em>
+新建文件test1, 写入如下数据 <code class="highlighter-rouge">22222222</code></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -L "1111" test test1
+</code></pre>
+</div>
+<p>输出 <code class="highlighter-rouge">test1</code></p>
+
+<h3 id="-l-files-with-matches">-l, –files-with-matches</h3>
+<p><em>打印出满足匹配条件的文件</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -l "1111" test test1
+</code></pre>
+</div>
+<p>输出 <code class="highlighter-rouge">test</code></p>
+
+<h3 id="-m-max-count">-m, –max-count</h3>
+<p><em>最多匹配的个数，一旦匹配的数量达到上限，则停止遍历</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -m 1 "1111" test
+</code></pre>
+</div>
+<p>只会打印出 <code class="highlighter-rouge">11111111</code></p>
+
+<h3 id="-o-only-matching">-o, –only-matching</h3>
+<p><em>只打印出匹配的文本，而不输出整行</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -o "1111" test
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>1111
+1111
+1111
+</code></pre>
+</div>
+
+<h3 id="-q--quiet-slient">-q, -quiet, –slient</h3>
+<p><em>不打印任何信息到标准输出</em></p>
+
+<h3 id="-s">-s</h3>
+<p><em>对于文件不存在或者不可读这种异常进行忽略操作</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -s "1111" test333
+</code></pre>
+</div>
+<p>不会打印出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep: test333: No such file or directory
+</code></pre>
+</div>
+<p>的错误</p>
+
+<h3 id="-b-byte-offset">-b, –byte-offset</h3>
+<p><em>打印出匹配的行在文件中的字节偏移，如果使用了-o参数，则打印出在匹配出的子串在文件中的字节偏移</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -b "2222" test
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>9:11112222
+18:22222222
+</code></pre>
+</div>
+<p>上面条件匹配出的行11112222在文件中的字节偏移为9</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -o -b "2222" test
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>13:2222
+18:2222
+22:2222
+</code></pre>
+</div>
+<p>上面条件匹配出的第一个子串2222在文件中的字节偏移为13</p>
+
+<h3 id="-h-with-filename">-H, –with-filename</h3>
+<p><em>打印出文件名</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -H "2222" test test1
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>test:11112222
+test:22222222
+test1:2222222
+</code></pre>
+</div>
+
+<h3 id="-h-no-filename">-h, –no-filename</h3>
+<p><em>不打印文件名</em></p>
+
+<h3 id="label">–label</h3>
+<p><em>给输出一个名字，这个名字有点类似-H输出的文件名</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>echo "2222" | grep --label=foo -H "2222"
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>foo:2222
+</code></pre>
+</div>
+
+<h3 id="-n-line-number">-n, –line-number</h3>
+<p><em>打印出匹配的行号</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -n "1111" test
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>1:11111111
+2:11112222
+</code></pre>
+</div>
+
+<h3 id="-t-initial-tab">-T, –initial-tab</h3>
+<p><em>对输出做格式化，使得标准的匹配在同一列开始打印，这个参数对于-H, -n和-b非常有用</em></p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -T "2222" test test1
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>test   :11112222
+test   :22222222
+test1  :2222222
+</code></pre>
+</div>
+<p>匹配出的文本从同一列开始打印，而前面的文本则通过空格进行补全。</p>
+
+<h3 id="-u-unix-byte-offsets">-u, –unix-byte-offsets</h3>
+<p><em>功能与-b类似，不过针对的是unix-style的文件</em></p>
+
+<h3 id="-a-num-after-contextnum">-A NUM, –after-context=NUM</h3>
+<p><em>根据NUM打印出匹配行之后的NUM行</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -A 1 "2222" test
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>11112222
+22222222
+"112233"
+</code></pre>
+</div>
+<p>最后一行实际不满足条件，但是因为加了-A 1参数，所以也在输出之中。</p>
+
+<h3 id="-b-num-before-contextnum">-B NUM, –before-context=NUM</h3>
+<p><em>跟-A相反，打印出匹配行之前的NUM行</em></p>
+
+<h3 id="-c-num--num-contextnum">-C NUM, -NUM, –context=NUM</h3>
+<p><em>-A和-B的合体。匹配行的前后NUM行都会被打印</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep -3 "1111" test  # 等价于 grep -A 3 -B 3 "1111" test
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>11111111
+11112222
+22222222
+"112233"
+aaaaaaaa
+
+</code></pre>
+</div>
+
+<h3 id="-a-text">-a, –text</h3>
+<p><em>将一个二进制文件当做文本文件进行处理</em></p>
+
+<h3 id="binary-filestype">–binary-files=TYPE</h3>
+<p><em>如果文件的前几个字节表明文件是二进制文件，则采用TYPE对文件进行处理</em></p>
+
+<ul>
+  <li>如果TYPE是binary则当做binary处理</li>
+  <li>如果TYPE是without-match，则grep假设这个文件不满足匹配</li>
+  <li>如果TYPE是text，则会当做是文本处理</li>
+</ul>
+
+<h3 id="-d-action-devicesaction">-D ACTION, –devices=ACTION</h3>
+<p><em>如果输入的文件是一个设备，FIFO或者socket，则使用指定的ACTION处理。</em></p>
+
+<ul>
+  <li>如果ACTION是read则把输出的文件当做是传统的文件进行读取</li>
+  <li>如果ACTION是skip，则跳过</li>
+</ul>
+
+<h3 id="-d-action-directoriesaction">-d ACTION, –directories=ACTION</h3>
+<p><em>如果输出的文件是一个文件夹，则使用指定的ACTION进行处理。</em></p>
+
+<ul>
+  <li>如果ACTION是read则把文件夹当做传统的文件进行读取</li>
+  <li>如果ACTION是skip，则跳过该文件夹</li>
+  <li>如果ACTION是recurse，则递归读取文件处理</li>
+</ul>
+
+<h3 id="excludeglob">–exclude=GLOB</h3>
+<p><em>跳过对GLOB执行的文件的扫描</em></p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep --exclude test1 2222 ./*
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>./test:11112222
+./test:22222222
+</code></pre>
+</div>
+
+<h3 id="exclude-fromfile">–exclude-from=FILE</h3>
+<p><em>通过文件FILE指定需要跳过的文件</em>
+新建文件skip，将<code class="highlighter-rouge">test1</code>写入到skip中，</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>grep --exclude-from=skip 2222 ./*
+</code></pre>
+</div>
+<p>输出</p>
+<div class="highlighter-rouge"><pre class="highlight"><code>./test:11112222
+./test:22222222
+</code></pre>
+</div>
+
+<h3 id="exclude-dirdir">–exclude-dir=DIR</h3>
+<p><em>忽略文件夹</em></p>
+
+<h3 id="-i">-I</h3>
+<p><em>认为二进制文件不包含匹配的，等同于–binary-files=without-match</em></p>
+
+<h3 id="includeglob">–include=GLOB</h3>
+<p><em>针对GLOB指定的文件进行扫描</em></p>
+
+<h3 id="-r-recursive">-r, –recursive</h3>
+<p><em>递归扫描</em></p>
+
+<h3 id="-r-dereference-recursive">-R, –dereference-recursive</h3>
+<p><em>递归扫描，范围比-r更广</em></p>

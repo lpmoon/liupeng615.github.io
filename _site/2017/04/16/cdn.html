@@ -1,0 +1,124 @@
+<p>随着互联网的发展，用户对于用户体验的要求越来越高。在以前用户觉得能够上网浏览东西就可以了，而不在乎速度如何，而如今用户希望能更快速高效的浏览图片乃至视频资源，这无疑对服务提供方提出了更高的要求。而用户所能感受到的延迟主要来自两个方面，</p>
+
+<ul>
+  <li>网络延迟</li>
+</ul>
+
+<p>网络延迟很大程度上决定于用户所在地以及用户访问服务所在地之间的距离。举个例子，中国的用户访问美国的服务的延迟明显高于访问中国内地服务的延迟。为了解决这个问题，服务提供商不得不将其服务部署在全球多个地方，根据用户的地理位置不同而访问不同的服务，这个方案虽然可行，但无疑对服务提供商提出了更高的要求。服务商可能需要建立多个机房，这就牵扯到数据同步，高昂的运营成本等问题。</p>
+
+<p><img src="http://wx2.sinaimg.cn/large/87f5e2f6ly1fd8wp4cu9kj21hc0u0765.jpg" alt="http://wx2.sinaimg.cn/large/87f5e2f6ly1fd8wp4cu9kj21hc0u0765.jpg" /></p>
+
+<p>如上图所示，服务商将服务分别部署在A,B,C三地，数据之间进行同步，三个用户根据不同的域名或者其他策略访问到就近的节点。</p>
+
+<ul>
+  <li>服务质量</li>
+</ul>
+
+<p>相比普通文本，图片或者视频这种占用带宽的静态资源，对于服务商机房带宽提出了很高的要求。如果带宽设置的比较小，流量高峰时很可能使机房瘫痪，影响用户体验，如果带宽设置的比较大，很可能面临着带宽浪费高成本的问题。</p>
+
+<p>对于很多小的服务提供商来说，投入大量的人力物力来解决上面的两个问题，都是很吃力，他们应该更多的关注于服务本身而不是这些基础设施的建设。随着上面问题越来越明显，cdn这个解决方案应运而生。 我们先来看一看cdn具体是指什么，</p>
+
+<blockquote>
+  <p>A content delivery network or content distribution network (CDN) is a globally distributed network of proxy servers deployed in multiple data centers. The goal of a CDN is to serve content to end-users with high availability and high performance. CDNs serve a large fraction of the Internet content today, including web objects (text, graphics and scripts), downloadable objects (media files, software, documents), applications (e-commerce, portals), live streaming media, on-demand streaming media, and social networks.</p>
+</blockquote>
+
+<p>上面这段话的大致意思是cdn是由分布在多个数据中心的代理服务器组成的分布式网络，其主要目的就是为用户提供高质量的服务器。这段话可能有点抽象，如果对比上面那附图就可以比较好的理解，将上面的A,B,C三地服务替换成cdn的服务，而用户请求的是cdn服务。</p>
+
+<p><img src="http://wx2.sinaimg.cn/large/87f5e2f6ly1fd8xo2vzp7j21hc0u0di6.jpg" alt="http://wx2.sinaimg.cn/large/87f5e2f6ly1fd8xo2vzp7j21hc0u0di6.jpg" /></p>
+
+<p>那么cdn具体是如何工作的呢？</p>
+
+<ol>
+  <li>用户访问服务（比如访问网页）</li>
+  <li>服务商返回需要请求的资源链接（图片地址）</li>
+  <li>用户根据图片地址访问cdn</li>
+  <li>cdn如果缓存了访问的数据则直接返回，否则将请求发送给服务商</li>
+  <li>服务商将数据返回给cdn（图片数据），cdn将数据缓存</li>
+  <li>cdn将数据返回给用户</li>
+</ol>
+
+<p>上面的流程对应的就是下面的图，</p>
+
+<p><img src="http://wx3.sinaimg.cn/large/87f5e2f6ly1fd8y80x7fyj20o50crmz3.jpg" alt="http://wx3.sinaimg.cn/large/87f5e2f6ly1fd8y80x7fyj20o50crmz3.jpg" /></p>
+
+<p>很多人会疑惑服务商返回的资源链接是如何定向到cdn服务的呢？我们通过下面的例子来给大家解释这个过程，</p>
+
+<p><img src="http://www.sinaimg.cn/dy/slidenews/2_img/2017_09/786_2070265_985439.jpg" alt="http://www.sinaimg.cn/dy/slidenews/2_img/2017_09/786_2070265_985439.jpg" /></p>
+
+<p>上面这张图来自新浪门户，其地址是http://www.sinaimg.cn/dy/slidenews/2_img/2017_09/786_2070265_985439.jpg， 我们通过浏览器来访问这个图片，并且抓包看一下究竟发生了什么。首先将对应的http请求过滤出来，</p>
+
+<p><img src="http://wx4.sinaimg.cn/large/87f5e2f6ly1fd8yq860f0j20tp0170sm.jpg" alt="http://wx4.sinaimg.cn/large/87f5e2f6ly1fd8yq860f0j20tp0170sm.jpg" /></p>
+
+<p>请求的ip地址是219.238.4.24, 我们需要进一步看一下这个ip是如何得到的。我们知道从域名映射为ip地址，需要dns服务器的参与，而客户端和dns服务器的交互则使用的是标准的dns协议，在wireshark的过滤栏中输入dns并且回车可以看到如下的请求，</p>
+
+<p><img src="http://wx4.sinaimg.cn/large/87f5e2f6ly1fd8z09fzvtj20tz0miwfy.jpg" alt="http://wx4.sinaimg.cn/large/87f5e2f6ly1fd8z09fzvtj20tz0miwfy.jpg" /></p>
+
+<p>在dns的返回值中有一项为Answers，这一项中有7条数据，前三条的type是CNAME，后面四条对应的type是A。这里我们先要分别了解下CNAME和A对应的含义，</p>
+
+<ul>
+  <li>cname</li>
+</ul>
+
+<blockquote>
+  <p>A Canonical Name record (abbreviated as CNAME record) is a type of resource record in the Domain Name System (DNS) used to specify that a domain name is an alias for another domain, which is the “canonical” domain.</p>
+</blockquote>
+
+<blockquote>
+  <p>This can prove convenient when running multiple services (like an FTP server and a webserver; each running on different ports) from a single IP address. One can, for example, point ftp.example.com and www.example.com to the DNS entry for example.com, which in turn has an A record which points to the IP address. Then, if the IP address ever changes, one only has to record the change in one place within the network: in the DNS A record for example.com.</p>
+</blockquote>
+
+<blockquote>
+  <p>CNAME records must always point to another domain name, never directly to an IP address.</p>
+</blockquote>
+
+<p>cname用于给某个域名新增一个别名，当dns返回的记录type为CNAME的时候，记录必须是一个域名而不能是某个ip地址。</p>
+
+<ul>
+  <li>A</li>
+</ul>
+
+<blockquote>
+  <p>A代表的就是域名指向特定的ip地址。</p>
+</blockquote>
+
+<p>再回到上面的7条记录，</p>
+
+<p><strong>i3.sina.com.cn是www.sinaimg.cn的别名，adiwlbs.gslb.sinaedge.com是i3.sina.com.cn的别名，cname jtpool.grid.sinaedge.com是adiwlbs.gslb.sinaedge.com的别名，而jtpool.grid.sinaedge.com对应着四个ip地址，分辨是219.238.4.24，219.238.4.20，219.238.4.21，219.238.4.23</strong></p>
+
+<p>我们在网上搜索sinaedge，可以知道这个是sina自己的cdn。 客户端最终从上面的四个ip地址中选出一个作为请求发起的ip地址。而上面的四个ip都是北京的ip，这是因为我的坐标在北京。</p>
+
+<p>将dns的流程加入到上面的图中可以得到最新的cdn流程，</p>
+
+<p><img src="http://wx2.sinaimg.cn/large/87f5e2f6gy1fd90dy7h9rj20oe0fimyt.jpg" alt="http://wx2.sinaimg.cn/large/87f5e2f6gy1fd90dy7h9rj20oe0fimyt.jpg" /></p>
+
+<p>我们知道cdn最主要的特点就是分布广，就进访问。如果我访问的位置变了，cdn的节点会不会也做出变动呢，并且是最优的节点。恰好我有一台日本的主机，在上面执行</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>nslookup www.sinaimg.cn
+</code></pre>
+</div>
+<p>可以得到如下的结果，</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>Server:		108.61.10.10
+Address:	108.61.10.10#53
+
+Non-authoritative answer:
+www.sinaimg.cn	canonical name = i3.sina.com.cn.
+i3.sina.com.cn	canonical name = adiwlbs.gslb.sinaedge.com.
+adiwlbs.gslb.sinaedge.com	canonical name = jtpool.grid.sinaedge.com.
+jtpool.grid.sinaedge.com	canonical name = sinaimg.cn.edgekey.net.
+sinaimg.cn.edgekey.net	canonical name = e4141.b.akamaiedge.net.
+Name:	e4141.b.akamaiedge.net
+Address: 118.215.188.199
+</code></pre>
+</div>
+
+<p>通过ip地址查询工具可以看到118.215.188.199是位于日本东京的一个ip，这印证了我们访问cdn的时候总是会选取最优（访问速度最快或者最近）的节点的结论。</p>
+
+<h2 id="后话">后话</h2>
+
+<p>上面说了这么多cdn的工作方式，那么cdn具体是怎么解决了之前提到的两个问题呢？</p>
+
+<ol>
+  <li>cdn分布广泛，用户就近访问极大的减少了网络延迟</li>
+  <li>cdn带有缓存功能，多个相同请求到达cdn，cdn一般情况下只会回源一次请求到服务提供方，这样大大减少了最终达到服务提供商机房的请求，即使服务提供商的机房不是很好，对用户的影响也不是很大。由于cdn的参与，服务提供商所要应对的流量可控性大大增强，也就不会出现带宽浪费的情况。</li>
+</ol>

@@ -1,0 +1,61 @@
+<p>最近负责和客户端建立连接的服务出现了卡死, 大量客户端建立连接失败, 同时会出现close_wait数量升高的情况, 这与<a href="http://zblacker.com/?p=128">线上服务器出现大量CLOSE_WAIT的原因 (1)</a>和<a href="http://zblacker.com/?p=137">线上服务器出现大量CLOSE_WAIT的原因 (2)</a>现象类似. 而触发这种现象出现的原因是依然是该服务依赖的其他服务变慢.</p>
+
+<p>在问题复现的时候发现, 所有的cpu使用率都很高, 并且都是被出问题的jvm所占用. 使用</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+top -H -p
+
+</code></pre>
+</div>
+
+<p>查找出使用cpu最高的几个线程, 然后使用jstack打印出所有的线程使用情况, 但是发现jstack调用的时候报错, 只好使用-F参数强制打印出线程使用情况. 奇怪的是导出的线程信息中并不包含之前使用top查找出的那几个占用cpu很高的线程, 这样就没办法定位出哪些代码占用了cpu. jstack的路走不通了, 尝试使用jmap将整个堆导出, 但是一旦运行jmap cpu的负载立刻就掉下来, 服务器恢复到正常状态. java自带的一些工具都行不通的情况下, 只能尝试其他方法. 既然我们需要统计哪些热点代码占用了cpu, 那么perf无疑是一个不错的选择, 通过下面的命令对一段时间内系统调用以及用户态调用进行采样, 并且统计出热点函数cpu占用情况.</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+perf record -g -p xxxx
+
+</code></pre>
+</div>
+
+<p>统计完成后, 使用</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+perf report
+
+</code></pre>
+</div>
+
+<p>将统计的数据以可读的方式进行展示. 通过查看输出, 发现该线程主要耗时都在GCTaskThread, 查看其他线程也是一样的情况, 所以基本上可以确定是gc问题导致的. 为了进一步确认这个结论, 使用gcviewer查看出问题当天服务器的gc日志, 在出问题的阶段的gc情况如下图所示,</p>
+
+<p><img src="http://ww1.sinaimg.cn/large/87f5e2f6jw1fa304wswrmj20vf0mjgwk.jpg" alt="http://ww1.sinaimg.cn/large/87f5e2f6jw1fa304wswrmj20vf0mjgwk.jpg" /></p>
+
+<p>从上面的图中可以看到如下信息,</p>
+
+<ul>
+  <li>
+    <p>频繁的full gc, 且时间较长</p>
+  </li>
+  <li>
+    <p>堆栈使用的峰值达到8g, 并且堆栈回收后最低值稳定在6g左右.</p>
+  </li>
+</ul>
+
+<p>这也就解释了为什么cpu都消耗在gc上. 接下来需要解决的问题是究竟哪些数据堆在堆栈中迟迟不能被回收. 在测试环境开启jmx</p>
+
+<div class="highlighter-rouge"><pre class="highlight"><code>
+-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=8999
+
+-Dcom.sun.management.jmxremote.ssl=false
+
+-Dcom.sun.management.jmxremote.authenticate=false
+
+</code></pre>
+</div>
+
+<p>使用jvisualvm查看堆信息(这里需要在压测前就进行连接, 否则压测后连接不上),发现了一类对象占用了较高的内存.这类对象的产生与<a href="http://zblacker.com/?p=137">线上服务器出现大量CLOSE_WAIT的原因 (2)</a>最后提到的解决方案有关, 这里大致描述一下:</p>
+
+<p>&gt; 为了解决netty io线程卡死的情况, 在业务handler处理的时候, 将任务(占用内存的对象)提交给一个线程池, 然后handler迅速返回, 由线程池完成任务的处理, 并且将返回值写入channel.</p>
+
+<p>由于线程池的队列采用的是无界队列, 所以导致了请求一直堆积, 并且依赖的后端资源较慢, 导致堆积情况加重…</p>
+
+<p>问题定位到了, 解决方案也就有了: 将无界队列修改未有界队列. 继续压测, 之前的问题消失了. 这里还需要说一下close_wait增多的原因: 服务基本无法响应, 客户端断连后, 断连请求服务器无法做出及时响应, 也就出现了close_wat增多的情况.</p>
+
