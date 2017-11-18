@@ -1,3 +1,8 @@
+---
+categories: Java 
+tags: Java 
+---
+
 最近看到了好几篇关于string.intern()的技术博客，
 
 * [http://hellojava.info/?p=514](http://hellojava.info/?p=514)
