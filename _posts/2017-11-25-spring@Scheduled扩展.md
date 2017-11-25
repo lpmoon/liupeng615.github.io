@@ -1,3 +1,8 @@
+---
+categories: Spring 
+tags: Spring 
+---
+
 ## 问题
 近期项目中使用到了spring的定时任务，只需要使用 **@Scheduled** 并且简单的配置就可以启动定时任务，十分方便。
 但是我们在用的时候由于对多个任务进行了抽象，希望得到的效果是由抽象类作为调度的入口，各个子实现类负责具体的任务执行，同时又希望多个任务的调度时间可以不同。举个例子，
@@ -204,7 +209,7 @@ public class CronAttachClassBeanPostProcessor implements DestructionAwareBeanPos
 }
 ```
 
-BeanPostProcessor会针对每一个带有 **@Scheduled** 方法进行一系列操作，包括生成新类，添加方法，添加注解，并且实例化新类用于替换老的对象。
+BeanPostProcessor会针对每一个带有 **@Scheduled** 方法进行一系列操作，包括生成新类，添加方法，添加注解，并且实例化新类用于替换老的对象。需要注意的是为了保证这个Processor在 **ScheduledAnnotationBeanostProcessor** 之前执行，我们需要设置其优先级高于 **ScheduledAnnotationBeanostProcessor** 。所以我们在这里设置其优先级为 **Ordered.HIGHEST_PRECEDENCE** 。
 
 ### 核心类
 ```
@@ -344,6 +349,9 @@ class Schedule1Child
 schedule2每执行一次，schedule1都已经执行了3次。和我们配置所要达到的预期一致。
 
 ## 其他
+上面的方案在实现上忽略了很多的细节，还有许多待完善的地方，但是其核心目的已经达到了:
+
+> 在不改动原有代码的基础上，在运行时注入，实现我们动态区分子任务调度时间的目的。
 
 github地址:
 https://github.com/lpmoon/spring-extension
