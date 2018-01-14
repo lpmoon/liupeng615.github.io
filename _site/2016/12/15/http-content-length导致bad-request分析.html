@@ -67,158 +67,156 @@
 
 <p>server</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
-package hello;
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+<span class="k">package</span> <span class="n">hello</span><span class="p">;</span>
 
 
 
-import org.springframework.boot.*;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">springframework</span><span class="p">.</span><span class="n">boot</span><span class="p">.*;</span>
 
-import org.springframework.boot.autoconfigure.*;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">springframework</span><span class="p">.</span><span class="n">boot</span><span class="p">.</span><span class="n">autoconfigure</span><span class="p">.*;</span>
 
-import org.springframework.stereotype.*;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">springframework</span><span class="p">.</span><span class="n">stereotype</span><span class="p">.*;</span>
 
-import org.springframework.web.bind.annotation.*;
-
-
-
-@Controller
-
-@EnableAutoConfiguration
-
-public class SampleController {
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">springframework</span><span class="p">.</span><span class="n">web</span><span class="p">.</span><span class="n">bind</span><span class="p">.</span><span class="n">annotation</span><span class="p">.*;</span>
 
 
 
-    @RequestMapping("/")
+<span class="p">@</span><span class="n">Controller</span>
 
-    @ResponseBody
+<span class="p">@</span><span class="n">EnableAutoConfiguration</span>
 
-    String home() {
-
-        return "Hello World!\n";
-
-    }
+<span class="k">public</span> <span class="n">class</span> <span class="n">SampleController</span> <span class="p">{</span>
 
 
 
-    public static void main(String[] args) throws Exception {
+    <span class="p">@</span><span class="n">RequestMapping</span><span class="p">(</span><span class="s2">"/"</span><span class="p">)</span>
 
-        SpringApplication.run(SampleController.class, args);
+    <span class="p">@</span><span class="n">ResponseBody</span>
 
-    }
+    <span class="k">String</span> <span class="n">home</span><span class="p">()</span> <span class="p">{</span>
 
-}
+        <span class="n">return</span> <span class="s2">"Hello World!</span><span class="se">\n</span><span class="s2">"</span><span class="p">;</span>
 
-</code></pre>
-</div>
+    <span class="p">}</span>
+
+
+
+    <span class="k">public</span> <span class="n">static</span> <span class="n">void</span> <span class="n">main</span><span class="p">(</span><span class="k">String</span><span class="p">[]</span> <span class="n">args</span><span class="p">)</span> <span class="n">throws</span> <span class="n">Exception</span> <span class="p">{</span>
+
+        <span class="n">SpringApplication</span><span class="p">.</span><span class="nf">run</span><span class="p">(</span><span class="n">SampleController</span><span class="p">.</span><span class="n">class</span><span class="p">,</span> <span class="n">args</span><span class="p">);</span>
+
+    <span class="p">}</span>
+
+<span class="p">}</span>
+
+</code></pre></div></div>
 
 <p>client</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
-package hello;
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+<span class="k">package</span> <span class="n">hello</span><span class="p">;</span>
 
 
 
-import org.apache.http.HttpResponse;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">apache</span><span class="p">.</span><span class="n">http</span><span class="p">.</span><span class="n">HttpResponse</span><span class="p">;</span>
 
-import org.apache.http.client.HttpClient;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">apache</span><span class="p">.</span><span class="n">http</span><span class="p">.</span><span class="n">client</span><span class="p">.</span><span class="n">HttpClient</span><span class="p">;</span>
 
-import org.apache.http.client.methods.HttpGet;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">apache</span><span class="p">.</span><span class="n">http</span><span class="p">.</span><span class="n">client</span><span class="p">.</span><span class="n">methods</span><span class="p">.</span><span class="n">HttpGet</span><span class="p">;</span>
 
-import org.apache.http.client.methods.HttpPost;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">apache</span><span class="p">.</span><span class="n">http</span><span class="p">.</span><span class="n">client</span><span class="p">.</span><span class="n">methods</span><span class="p">.</span><span class="n">HttpPost</span><span class="p">;</span>
 
-import org.apache.http.entity.ByteArrayEntity;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">apache</span><span class="p">.</span><span class="n">http</span><span class="p">.</span><span class="n">entity</span><span class="p">.</span><span class="n">ByteArrayEntity</span><span class="p">;</span>
 
-import org.apache.http.impl.client.HttpClients;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">apache</span><span class="p">.</span><span class="n">http</span><span class="p">.</span><span class="n">impl</span><span class="p">.</span><span class="n">client</span><span class="p">.</span><span class="n">HttpClients</span><span class="p">;</span>
 
-import org.apache.http.impl.conn.PoolingHttpClientConnectionManager;
-
-
-
-import java.io.BufferedReader;
-
-import java.io.IOException;
-
-import java.io.InputStreamReader;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">apache</span><span class="p">.</span><span class="n">http</span><span class="p">.</span><span class="n">impl</span><span class="p">.</span><span class="n">conn</span><span class="p">.</span><span class="n">PoolingHttpClientConnectionManager</span><span class="p">;</span>
 
 
 
-/**
+<span class="n">import</span> <span class="n">java</span><span class="p">.</span><span class="n">io</span><span class="p">.</span><span class="n">BufferedReader</span><span class="p">;</span>
 
- * Created by zblacker on 16/12/15.
+<span class="n">import</span> <span class="n">java</span><span class="p">.</span><span class="n">io</span><span class="p">.</span><span class="n">IOException</span><span class="p">;</span>
 
- */
-
-public class Client {
-
-    public static void main(String[] args) {
-
-        PoolingHttpClientConnectionManager m = new PoolingHttpClientConnectionManager();
-
-        HttpClient client = HttpClients.custom().setConnectionManager(m).build();
+<span class="n">import</span> <span class="n">java</span><span class="p">.</span><span class="n">io</span><span class="p">.</span><span class="n">InputStreamReader</span><span class="p">;</span>
 
 
 
-        HttpGet get = new HttpGet("http://127.0.0.1:8080");
+<span class="p">/**</span>
 
-        // 下面的代码会导致第二个请求出现错误
+ <span class="p">*</span> <span class="n">Created</span> <span class="n">by</span> <span class="n">zblacker</span> <span class="n">on</span> <span class="m">16</span><span class="p">/</span><span class="m">12</span><span class="p">/</span><span class="m">15.</span>
 
-        get.addHeader("Content-Length", String.valueOf(6000));
+ <span class="p">*/</span>
 
+<span class="k">public</span> <span class="n">class</span> <span class="n">Client</span> <span class="p">{</span>
 
+    <span class="k">public</span> <span class="n">static</span> <span class="n">void</span> <span class="n">main</span><span class="p">(</span><span class="k">String</span><span class="p">[]</span> <span class="n">args</span><span class="p">)</span> <span class="p">{</span>
 
-        try {
+        <span class="n">PoolingHttpClientConnectionManager</span> <span class="n">m</span> <span class="p">=</span> <span class="n">new</span> <span class="n">PoolingHttpClientConnectionManager</span><span class="p">();</span>
 
-            HttpResponse r = client.execute(get);
-
-            BufferedReader br = new BufferedReader(new InputStreamReader(r.getEntity().getContent()));
-
-            String line;
-
-            while ((line = br.readLine()) != null) {
-
-                System.out.printf(line);
-
-            }
-
-        } catch (IOException e) {
-
-            e.printStackTrace();
-
-        }
+        <span class="n">HttpClient</span> <span class="n">client</span> <span class="p">=</span> <span class="n">HttpClients</span><span class="p">.</span><span class="n">custom</span><span class="p">().</span><span class="n">setConnectionManager</span><span class="p">(</span><span class="n">m</span><span class="p">).</span><span class="n">build</span><span class="p">();</span>
 
 
 
-        HttpPost post = new HttpPost("http://127.0.0.1:8080");
+        <span class="n">HttpGet</span> <span class="n">get</span> <span class="p">=</span> <span class="n">new</span> <span class="n">HttpGet</span><span class="p">(</span><span class="s2">"http://127.0.0.1:8080"</span><span class="p">);</span>
 
-        post.setEntity(new ByteArrayEntity(new byte[6000]));
+        <span class="p">//</span> <span class="err">下面的代码会导致第二个请求出现错误</span>
 
-        try {
-
-            HttpResponse r = client.execute(post);
-
-            BufferedReader br = new BufferedReader(new InputStreamReader(r.getEntity().getContent()));
-
-            String line;
-
-            while ((line = br.readLine()) != null) {
-
-                System.out.printf(line);
-
-            }
-
-        } catch (IOException e) {
-
-            e.printStackTrace();
-
-        }
-
-    }
-
-}
+        <span class="n">get</span><span class="p">.</span><span class="n">addHeader</span><span class="p">(</span><span class="s2">"Content-Length"</span><span class="p">,</span> <span class="k">String</span><span class="p">.</span><span class="n">valueOf</span><span class="p">(</span><span class="m">6000</span><span class="p">));</span>
 
 
 
-</code></pre>
-</div>
+        <span class="n">try</span> <span class="p">{</span>
+
+            <span class="n">HttpResponse</span> <span class="n">r</span> <span class="p">=</span> <span class="n">client</span><span class="p">.</span><span class="n">execute</span><span class="p">(</span><span class="n">get</span><span class="p">);</span>
+
+            <span class="n">BufferedReader</span> <span class="n">br</span> <span class="p">=</span> <span class="n">new</span> <span class="n">BufferedReader</span><span class="p">(</span><span class="n">new</span> <span class="n">InputStreamReader</span><span class="p">(</span><span class="n">r</span><span class="p">.</span><span class="n">getEntity</span><span class="p">().</span><span class="n">getContent</span><span class="p">()));</span>
+
+            <span class="k">String</span> <span class="n">line</span><span class="p">;</span>
+
+            <span class="k">while</span> <span class="p">((</span><span class="n">line</span> <span class="p">=</span> <span class="n">br</span><span class="p">.</span><span class="n">readLine</span><span class="p">())</span> <span class="c1">!= null) {
+</span>
+                <span class="nf">System</span><span class="p">.</span><span class="n">out</span><span class="p">.</span><span class="n">printf</span><span class="p">(</span><span class="n">line</span><span class="p">);</span>
+
+            <span class="p">}</span>
+
+        <span class="p">}</span> <span class="n">catch</span> <span class="p">(</span><span class="n">IOException</span> <span class="n">e</span><span class="p">)</span> <span class="p">{</span>
+
+            <span class="n">e</span><span class="p">.</span><span class="n">printStackTrace</span><span class="p">();</span>
+
+        <span class="p">}</span>
+
+
+
+        <span class="n">HttpPost</span> <span class="n">post</span> <span class="p">=</span> <span class="n">new</span> <span class="n">HttpPost</span><span class="p">(</span><span class="s2">"http://127.0.0.1:8080"</span><span class="p">);</span>
+
+        <span class="n">post</span><span class="p">.</span><span class="n">setEntity</span><span class="p">(</span><span class="n">new</span> <span class="n">ByteArrayEntity</span><span class="p">(</span><span class="n">new</span> <span class="n">byte</span><span class="p">[</span><span class="m">6000</span><span class="p">]));</span>
+
+        <span class="n">try</span> <span class="p">{</span>
+
+            <span class="n">HttpResponse</span> <span class="n">r</span> <span class="p">=</span> <span class="n">client</span><span class="p">.</span><span class="n">execute</span><span class="p">(</span><span class="n">post</span><span class="p">);</span>
+
+            <span class="n">BufferedReader</span> <span class="n">br</span> <span class="p">=</span> <span class="n">new</span> <span class="n">BufferedReader</span><span class="p">(</span><span class="n">new</span> <span class="n">InputStreamReader</span><span class="p">(</span><span class="n">r</span><span class="p">.</span><span class="n">getEntity</span><span class="p">().</span><span class="n">getContent</span><span class="p">()));</span>
+
+            <span class="k">String</span> <span class="n">line</span><span class="p">;</span>
+
+            <span class="k">while</span> <span class="p">((</span><span class="n">line</span> <span class="p">=</span> <span class="n">br</span><span class="p">.</span><span class="n">readLine</span><span class="p">())</span> <span class="c1">!= null) {
+</span>
+                <span class="nf">System</span><span class="p">.</span><span class="n">out</span><span class="p">.</span><span class="n">printf</span><span class="p">(</span><span class="n">line</span><span class="p">);</span>
+
+            <span class="p">}</span>
+
+        <span class="p">}</span> <span class="n">catch</span> <span class="p">(</span><span class="n">IOException</span> <span class="n">e</span><span class="p">)</span> <span class="p">{</span>
+
+            <span class="n">e</span><span class="p">.</span><span class="n">printStackTrace</span><span class="p">();</span>
+
+        <span class="p">}</span>
+
+    <span class="p">}</span>
+
+<span class="p">}</span>
+
+
+
+</code></pre></div></div>

@@ -1,0 +1,679 @@
+<!-- TOC -->
+
+<ul>
+  <li><a href="#preparerequest">prepareRequest</a></li>
+  <li><a href="#postparserequest">postParseRequest</a>
+    <ul>
+      <li><a href="#1-处理url为的情况">1. 处理url为*的情况</a></li>
+      <li><a href="#2-解析url">2. 解析url</a></li>
+      <li><a href="#3-查找host-context-wrapper">3. 查找Host, Context, Wrapper</a></li>
+      <li><a href="#4-转发">4. 转发</a></li>
+      <li><a href="#5-处理trace请求">5. 处理trace请求</a></li>
+    </ul>
+  </li>
+  <li><a href="#请求处理">请求处理</a></li>
+</ul>
+
+<!-- /TOC -->
+<p>tomcat在协议解析之后会进入到请求处理阶段，请求处理大致可以分为几个阶段:</p>
+<ol>
+  <li>请求预处理 prepareRequest</li>
+  <li>请求预处理结束后，进入到postParseRequest阶段，这个阶段会查找请求对应的host, context, wrapper。</li>
+  <li>请求处理阶段</li>
+</ol>
+
+<h1 id="preparerequest">prepareRequest</h1>
+<p>预处理阶段主要包括以下几个阶段，</p>
+
+<ul>
+  <li>检查协议，如果协议非法，则返回505</li>
+  <li>如果header中包含connection，并且是Keep-alive，则设置keepAlive为true</li>
+  <li>如果header中包含expect，并且是100-continue，则设置对应状态为，如果不包含100-continue，则返回417</li>
+  <li>检查user-agent</li>
+  <li>检查url</li>
+  <li>如果header中包含transfer-encoding，如果transfer-encoding合法，则把对应的filter添加到inputBuffer中，否则返回501</li>
+  <li>如果设置了content-length，并且设置了transfer-encoding为chunked，则把header中的content-length移除，因为chunked模式下不允许设置content-length。如果设置了content-length，并且不是chunked，则为inputBuffer添加IdentityInputFilter</li>
+  <li>检查header中是否有host，如果没有则返回400。</li>
+</ul>
+
+<p>预处理结束后，如果没有错误码被设置，则进入到对应的adapter的service方法中进行处理，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>            <span class="c1">// Process the request in the adapter</span>
+            <span class="k">if</span> <span class="o">(!</span><span class="n">getErrorState</span><span class="o">().</span><span class="na">isError</span><span class="o">())</span> <span class="o">{</span>
+                <span class="k">try</span> <span class="o">{</span>
+                    <span class="n">rp</span><span class="o">.</span><span class="na">setStage</span><span class="o">(</span><span class="n">org</span><span class="o">.</span><span class="na">apache</span><span class="o">.</span><span class="na">coyote</span><span class="o">.</span><span class="na">Constants</span><span class="o">.</span><span class="na">STAGE_SERVICE</span><span class="o">);</span>
+                    <span class="n">getAdapter</span><span class="o">().</span><span class="na">service</span><span class="o">(</span><span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">);</span>
+                    <span class="c1">// Handle when the response was committed before a serious</span>
+                    <span class="c1">// error occurred.  Throwing a ServletException should both</span>
+                    <span class="c1">// set the status to 500 and set the errorException.</span>
+                    <span class="c1">// If we fail here, then the response is likely already</span>
+                    <span class="c1">// committed, so we can't try and set headers.</span>
+                    <span class="k">if</span><span class="o">(</span><span class="n">keepAlive</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">getErrorState</span><span class="o">().</span><span class="na">isError</span><span class="o">()</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">isAsync</span><span class="o">()</span> <span class="o">&amp;&amp;</span>
+                            <span class="n">statusDropsConnection</span><span class="o">(</span><span class="n">response</span><span class="o">.</span><span class="na">getStatus</span><span class="o">()))</span> <span class="o">{</span>
+                        <span class="n">setErrorState</span><span class="o">(</span><span class="n">ErrorState</span><span class="o">.</span><span class="na">CLOSE_CLEAN</span><span class="o">,</span> <span class="kc">null</span><span class="o">);</span>
+                    <span class="o">}</span>
+                <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">InterruptedIOException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+                <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">HeadersTooLargeException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+                <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">t</span><span class="o">)</span> <span class="o">{</span>
+                <span class="o">}</span>
+            <span class="o">}</span>
+</code></pre></div></div>
+<p>在默认的情况下这个adapter都是CoyoteAdapter的实例，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">service</span><span class="o">(</span><span class="n">org</span><span class="o">.</span><span class="na">apache</span><span class="o">.</span><span class="na">coyote</span><span class="o">.</span><span class="na">Request</span> <span class="n">req</span><span class="o">,</span>
+                        <span class="n">org</span><span class="o">.</span><span class="na">apache</span><span class="o">.</span><span class="na">coyote</span><span class="o">.</span><span class="na">Response</span> <span class="n">res</span><span class="o">)</span>
+        <span class="kd">throws</span> <span class="n">Exception</span> <span class="o">{</span>
+
+        <span class="n">Request</span> <span class="n">request</span> <span class="o">=</span> <span class="o">(</span><span class="n">Request</span><span class="o">)</span> <span class="n">req</span><span class="o">.</span><span class="na">getNote</span><span class="o">(</span><span class="n">ADAPTER_NOTES</span><span class="o">);</span>
+        <span class="n">Response</span> <span class="n">response</span> <span class="o">=</span> <span class="o">(</span><span class="n">Response</span><span class="o">)</span> <span class="n">res</span><span class="o">.</span><span class="na">getNote</span><span class="o">(</span><span class="n">ADAPTER_NOTES</span><span class="o">);</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">request</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="c1">// Create objects</span>
+            <span class="n">request</span> <span class="o">=</span> <span class="n">connector</span><span class="o">.</span><span class="na">createRequest</span><span class="o">();</span>
+            <span class="n">request</span><span class="o">.</span><span class="na">setCoyoteRequest</span><span class="o">(</span><span class="n">req</span><span class="o">);</span>
+            <span class="n">response</span> <span class="o">=</span> <span class="n">connector</span><span class="o">.</span><span class="na">createResponse</span><span class="o">();</span>
+            <span class="n">response</span><span class="o">.</span><span class="na">setCoyoteResponse</span><span class="o">(</span><span class="n">res</span><span class="o">);</span>
+
+            <span class="c1">// Link objects</span>
+            <span class="n">request</span><span class="o">.</span><span class="na">setResponse</span><span class="o">(</span><span class="n">response</span><span class="o">);</span>
+            <span class="n">response</span><span class="o">.</span><span class="na">setRequest</span><span class="o">(</span><span class="n">request</span><span class="o">);</span>
+
+            <span class="c1">// Set as notes</span>
+            <span class="n">req</span><span class="o">.</span><span class="na">setNote</span><span class="o">(</span><span class="n">ADAPTER_NOTES</span><span class="o">,</span> <span class="n">request</span><span class="o">);</span>
+            <span class="n">res</span><span class="o">.</span><span class="na">setNote</span><span class="o">(</span><span class="n">ADAPTER_NOTES</span><span class="o">,</span> <span class="n">response</span><span class="o">);</span>
+
+            <span class="c1">// Set query string encoding</span>
+            <span class="n">req</span><span class="o">.</span><span class="na">getParameters</span><span class="o">().</span><span class="na">setQueryStringEncoding</span>
+                <span class="o">(</span><span class="n">connector</span><span class="o">.</span><span class="na">getURIEncoding</span><span class="o">());</span>
+
+        <span class="o">}</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">connector</span><span class="o">.</span><span class="na">getXpoweredBy</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">response</span><span class="o">.</span><span class="na">addHeader</span><span class="o">(</span><span class="s">"X-Powered-By"</span><span class="o">,</span> <span class="n">POWERED_BY</span><span class="o">);</span>
+        <span class="o">}</span>
+
+        <span class="kt">boolean</span> <span class="n">async</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+        <span class="kt">boolean</span> <span class="n">postParseSuccess</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="c1">// Parse and set Catalina and configuration specific</span>
+            <span class="c1">// request parameters</span>
+            <span class="n">req</span><span class="o">.</span><span class="na">getRequestProcessor</span><span class="o">().</span><span class="na">setWorkerThreadName</span><span class="o">(</span><span class="n">THREAD_NAME</span><span class="o">.</span><span class="na">get</span><span class="o">());</span>
+            <span class="n">postParseSuccess</span> <span class="o">=</span> <span class="n">postParseRequest</span><span class="o">(</span><span class="n">req</span><span class="o">,</span> <span class="n">request</span><span class="o">,</span> <span class="n">res</span><span class="o">,</span> <span class="n">response</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">postParseSuccess</span><span class="o">)</span> <span class="o">{</span>
+                <span class="c1">//check valves if we support async</span>
+                <span class="n">request</span><span class="o">.</span><span class="na">setAsyncSupported</span><span class="o">(</span><span class="n">connector</span><span class="o">.</span><span class="na">getService</span><span class="o">().</span><span class="na">getContainer</span><span class="o">().</span><span class="na">getPipeline</span><span class="o">().</span><span class="na">isAsyncSupported</span><span class="o">());</span>
+                <span class="c1">// Calling the container</span>
+                <span class="n">connector</span><span class="o">.</span><span class="na">getService</span><span class="o">().</span><span class="na">getContainer</span><span class="o">().</span><span class="na">getPipeline</span><span class="o">().</span><span class="na">getFirst</span><span class="o">().</span><span class="na">invoke</span><span class="o">(</span><span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">);</span>
+            <span class="o">}</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">request</span><span class="o">.</span><span class="na">isAsync</span><span class="o">())</span> <span class="o">{</span>
+                <span class="n">async</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+                <span class="n">ReadListener</span> <span class="n">readListener</span> <span class="o">=</span> <span class="n">req</span><span class="o">.</span><span class="na">getReadListener</span><span class="o">();</span>
+                <span class="k">if</span> <span class="o">(</span><span class="n">readListener</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="n">request</span><span class="o">.</span><span class="na">isFinished</span><span class="o">())</span> <span class="o">{</span>
+                    <span class="c1">// Possible the all data may have been read during service()</span>
+                    <span class="c1">// method so this needs to be checked here</span>
+                    <span class="n">ClassLoader</span> <span class="n">oldCL</span> <span class="o">=</span> <span class="kc">null</span><span class="o">;</span>
+                    <span class="k">try</span> <span class="o">{</span>
+                        <span class="n">oldCL</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="na">getContext</span><span class="o">().</span><span class="na">bind</span><span class="o">(</span><span class="kc">false</span><span class="o">,</span> <span class="kc">null</span><span class="o">);</span>
+                        <span class="k">if</span> <span class="o">(</span><span class="n">req</span><span class="o">.</span><span class="na">sendAllDataReadEvent</span><span class="o">())</span> <span class="o">{</span>
+                            <span class="n">req</span><span class="o">.</span><span class="na">getReadListener</span><span class="o">().</span><span class="na">onAllDataRead</span><span class="o">();</span>
+                        <span class="o">}</span>
+                    <span class="o">}</span> <span class="k">finally</span> <span class="o">{</span>
+                        <span class="n">request</span><span class="o">.</span><span class="na">getContext</span><span class="o">().</span><span class="na">unbind</span><span class="o">(</span><span class="kc">false</span><span class="o">,</span> <span class="n">oldCL</span><span class="o">);</span>
+                    <span class="o">}</span>
+                <span class="o">}</span>
+
+                <span class="n">Throwable</span> <span class="n">throwable</span> <span class="o">=</span>
+                        <span class="o">(</span><span class="n">Throwable</span><span class="o">)</span> <span class="n">request</span><span class="o">.</span><span class="na">getAttribute</span><span class="o">(</span><span class="n">RequestDispatcher</span><span class="o">.</span><span class="na">ERROR_EXCEPTION</span><span class="o">);</span>
+
+                <span class="c1">// If an async request was started, is not going to end once</span>
+                <span class="c1">// this container thread finishes and an error occurred, trigger</span>
+                <span class="c1">// the async error process</span>
+                <span class="k">if</span> <span class="o">(!</span><span class="n">request</span><span class="o">.</span><span class="na">isAsyncCompleting</span><span class="o">()</span> <span class="o">&amp;&amp;</span> <span class="n">throwable</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+                    <span class="n">request</span><span class="o">.</span><span class="na">getAsyncContextInternal</span><span class="o">().</span><span class="na">setErrorState</span><span class="o">(</span><span class="n">throwable</span><span class="o">,</span> <span class="kc">true</span><span class="o">);</span>
+                <span class="o">}</span>
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                <span class="n">request</span><span class="o">.</span><span class="na">finishRequest</span><span class="o">();</span>
+                <span class="n">response</span><span class="o">.</span><span class="na">finishResponse</span><span class="o">();</span>
+            <span class="o">}</span>
+
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">IOException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="c1">// Ignore</span>
+        <span class="o">}</span> <span class="k">finally</span> <span class="o">{</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+</code></pre></div></div>
+<p>service方法首先会创建request和response，这里创建的request和response实现了标准的HttpServletRequest和HttpServletResponse。然后调用postParseRequest继续进行预处理</p>
+
+<h1 id="postparserequest">postParseRequest</h1>
+<p>postParseRequest很长，需要对其进行分解，</p>
+<h2 id="1-处理url为的情况">1. 处理url为*的情况</h2>
+
+<p>当url为*的时候，如果method为options，则返回tomcat支持的所有method，需要注意的TRACE method需要特殊配置才会出现在返回列表中，也就是说一般情况下不允许用户执行TRACE操作，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="c1">// Check for ping OPTIONS * request</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">undecodedURI</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="s">"*"</span><span class="o">))</span> <span class="o">{</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">req</span><span class="o">.</span><span class="na">method</span><span class="o">().</span><span class="na">equalsIgnoreCase</span><span class="o">(</span><span class="s">"OPTIONS"</span><span class="o">))</span> <span class="o">{</span>
+                <span class="n">StringBuilder</span> <span class="n">allow</span> <span class="o">=</span> <span class="k">new</span> <span class="n">StringBuilder</span><span class="o">();</span>
+                <span class="n">allow</span><span class="o">.</span><span class="na">append</span><span class="o">(</span><span class="s">"GET, HEAD, POST, PUT, DELETE"</span><span class="o">);</span>
+                <span class="c1">// Trace if allowed</span>
+                <span class="k">if</span> <span class="o">(</span><span class="n">connector</span><span class="o">.</span><span class="na">getAllowTrace</span><span class="o">())</span> <span class="o">{</span>
+                    <span class="n">allow</span><span class="o">.</span><span class="na">append</span><span class="o">(</span><span class="s">", TRACE"</span><span class="o">);</span>
+                <span class="o">}</span>
+                <span class="c1">// Always allow options</span>
+                <span class="n">allow</span><span class="o">.</span><span class="na">append</span><span class="o">(</span><span class="s">", OPTIONS"</span><span class="o">);</span>
+                <span class="n">res</span><span class="o">.</span><span class="na">setHeader</span><span class="o">(</span><span class="s">"Allow"</span><span class="o">,</span> <span class="n">allow</span><span class="o">.</span><span class="na">toString</span><span class="o">());</span>
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                <span class="n">res</span><span class="o">.</span><span class="na">setStatus</span><span class="o">(</span><span class="mi">404</span><span class="o">);</span>
+                <span class="n">res</span><span class="o">.</span><span class="na">setMessage</span><span class="o">(</span><span class="s">"Not found"</span><span class="o">);</span>
+            <span class="o">}</span>
+            <span class="n">connector</span><span class="o">.</span><span class="na">getService</span><span class="o">().</span><span class="na">getContainer</span><span class="o">().</span><span class="na">logAccess</span><span class="o">(</span>
+                    <span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">,</span> <span class="mi">0</span><span class="o">,</span> <span class="kc">true</span><span class="o">);</span>
+            <span class="k">return</span> <span class="kc">false</span><span class="o">;</span>
+        <span class="o">}</span>
+</code></pre></div></div>
+<h2 id="2-解析url">2. 解析url</h2>
+
+<p>如果url满足/path;a=b这种类型，则需要将a=b解析出来，a作为参数名，b作为参数值。需要注意的是这里的参数和querystring不同。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="n">MessageBytes</span> <span class="n">decodedURI</span> <span class="o">=</span> <span class="n">req</span><span class="o">.</span><span class="na">decodedURI</span><span class="o">();</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">undecodedURI</span><span class="o">.</span><span class="na">getType</span><span class="o">()</span> <span class="o">==</span> <span class="n">MessageBytes</span><span class="o">.</span><span class="na">T_BYTES</span><span class="o">)</span> <span class="o">{</span>
+            <span class="c1">// Copy the raw URI to the decodedURI</span>
+            <span class="n">decodedURI</span><span class="o">.</span><span class="na">duplicate</span><span class="o">(</span><span class="n">undecodedURI</span><span class="o">);</span>
+
+            <span class="c1">// Parse the path parameters. This will:</span>
+            <span class="c1">//   - strip out the path parameters</span>
+            <span class="c1">//   - convert the decodedURI to bytes</span>
+            <span class="n">parsePathParameters</span><span class="o">(</span><span class="n">req</span><span class="o">,</span> <span class="n">request</span><span class="o">);</span>
+
+            <span class="c1">// URI decoding</span>
+            <span class="c1">// %xx decoding of the URL</span>
+            <span class="k">try</span> <span class="o">{</span>
+                <span class="n">req</span><span class="o">.</span><span class="na">getURLDecoder</span><span class="o">().</span><span class="na">convert</span><span class="o">(</span><span class="n">decodedURI</span><span class="o">,</span> <span class="kc">false</span><span class="o">);</span>
+            <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">IOException</span> <span class="n">ioe</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="o">}</span>
+            <span class="c1">// Normalization</span>
+            <span class="k">if</span> <span class="o">(!</span><span class="n">normalize</span><span class="o">(</span><span class="n">req</span><span class="o">.</span><span class="na">decodedURI</span><span class="o">()))</span> <span class="o">{</span>
+
+            <span class="o">}</span>
+            <span class="c1">// Character decoding</span>
+            <span class="n">convertURI</span><span class="o">(</span><span class="n">decodedURI</span><span class="o">,</span> <span class="n">request</span><span class="o">);</span>
+            <span class="c1">// Check that the URI is still normalized</span>
+            <span class="k">if</span> <span class="o">(!</span><span class="n">checkNormalize</span><span class="o">(</span><span class="n">req</span><span class="o">.</span><span class="na">decodedURI</span><span class="o">()))</span> <span class="o">{</span>
+
+            <span class="o">}</span>
+        <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+            <span class="cm">/* The URI is chars or String, and has been sent using an in-memory
+             * protocol handler. The following assumptions are made:
+             * - req.requestURI() has been set to the 'original' non-decoded,
+             *   non-normalized URI
+             * - req.decodedURI() has been set to the decoded, normalized form
+             *   of req.requestURI()
+             */</span>
+            <span class="n">decodedURI</span><span class="o">.</span><span class="na">toChars</span><span class="o">();</span>
+            <span class="c1">// Remove all path parameters; any needed path parameter should be set</span>
+            <span class="c1">// using the request object rather than passing it in the URL</span>
+            <span class="n">CharChunk</span> <span class="n">uriCC</span> <span class="o">=</span> <span class="n">decodedURI</span><span class="o">.</span><span class="na">getCharChunk</span><span class="o">();</span>
+            <span class="kt">int</span> <span class="n">semicolon</span> <span class="o">=</span> <span class="n">uriCC</span><span class="o">.</span><span class="na">indexOf</span><span class="o">(</span><span class="sc">';'</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">semicolon</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="o">)</span> <span class="o">{</span>
+                <span class="n">decodedURI</span><span class="o">.</span><span class="na">setChars</span>
+                    <span class="o">(</span><span class="n">uriCC</span><span class="o">.</span><span class="na">getBuffer</span><span class="o">(),</span> <span class="n">uriCC</span><span class="o">.</span><span class="na">getStart</span><span class="o">(),</span> <span class="n">semicolon</span><span class="o">);</span>
+            <span class="o">}</span>
+        <span class="o">}</span>
+</code></pre></div></div>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="cm">/**
+     * Extract the path parameters from the request. This assumes parameters are
+     * of the form /path;name=value;name2=value2/ etc. Currently only really
+     * interested in the session ID that will be in this form. Other parameters
+     * can safely be ignored.
+     */</span>
+    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">parsePathParameters</span><span class="o">(</span><span class="n">org</span><span class="o">.</span><span class="na">apache</span><span class="o">.</span><span class="na">coyote</span><span class="o">.</span><span class="na">Request</span> <span class="n">req</span><span class="o">,</span> <span class="n">Request</span> <span class="n">request</span><span class="o">)</span> <span class="o">{</span>
+</code></pre></div></div>
+<h2 id="3-查找host-context-wrapper">3. 查找Host, Context, Wrapper</h2>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>            <span class="n">connector</span><span class="o">.</span><span class="na">getService</span><span class="o">().</span><span class="na">getMapper</span><span class="o">().</span><span class="na">map</span><span class="o">(</span><span class="n">serverName</span><span class="o">,</span> <span class="n">decodedURI</span><span class="o">,</span>
+                    <span class="n">version</span><span class="o">,</span> <span class="n">request</span><span class="o">.</span><span class="na">getMappingData</span><span class="o">());</span>
+</code></pre></div></div>
+<p>根据connector获取service，然后从service获取mapper，调用mapper的map方法进行对应的查找。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">public</span> <span class="kt">void</span> <span class="nf">map</span><span class="o">(</span><span class="n">MessageBytes</span> <span class="n">host</span><span class="o">,</span> <span class="n">MessageBytes</span> <span class="n">uri</span><span class="o">,</span> <span class="n">String</span> <span class="n">version</span><span class="o">,</span>
+                    <span class="n">MappingData</span> <span class="n">mappingData</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">IOException</span> <span class="o">{</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">host</span><span class="o">.</span><span class="na">isNull</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">host</span><span class="o">.</span><span class="na">getCharChunk</span><span class="o">().</span><span class="na">append</span><span class="o">(</span><span class="n">defaultHostName</span><span class="o">);</span>
+        <span class="o">}</span>
+        <span class="n">host</span><span class="o">.</span><span class="na">toChars</span><span class="o">();</span>
+        <span class="n">uri</span><span class="o">.</span><span class="na">toChars</span><span class="o">();</span>
+        <span class="n">internalMap</span><span class="o">(</span><span class="n">host</span><span class="o">.</span><span class="na">getCharChunk</span><span class="o">(),</span> <span class="n">uri</span><span class="o">.</span><span class="na">getCharChunk</span><span class="o">(),</span> <span class="n">version</span><span class="o">,</span>
+                <span class="n">mappingData</span><span class="o">);</span>
+    <span class="o">}</span>
+</code></pre></div></div>
+<ul>
+  <li>查找host</li>
+</ul>
+
+<p>internalMap首先会调用exactFindIgnoreCase来进行查找对应的host。mapper中的Host按照名称的字符序进行了排序，所以使用serverName查找的时候使用的二分查找，这是tomcat为了效率而做的优化。如果没有查找到对应的host，则会进行下面的处理，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="k">if</span> <span class="o">(</span><span class="n">mappedHost</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+            <span class="c1">// Note: Internally, the Mapper does not use the leading * on a</span>
+            <span class="c1">//       wildcard host. This is to allow this shortcut.</span>
+            <span class="kt">int</span> <span class="n">firstDot</span> <span class="o">=</span> <span class="n">host</span><span class="o">.</span><span class="na">indexOf</span><span class="o">(</span><span class="sc">'.'</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">firstDot</span> <span class="o">&gt;</span> <span class="o">-</span><span class="mi">1</span><span class="o">)</span> <span class="o">{</span>
+                <span class="kt">int</span> <span class="n">offset</span> <span class="o">=</span> <span class="n">host</span><span class="o">.</span><span class="na">getOffset</span><span class="o">();</span>
+                <span class="k">try</span> <span class="o">{</span>
+                    <span class="n">host</span><span class="o">.</span><span class="na">setOffset</span><span class="o">(</span><span class="n">firstDot</span> <span class="o">+</span> <span class="n">offset</span><span class="o">);</span>
+                    <span class="n">mappedHost</span> <span class="o">=</span> <span class="n">exactFindIgnoreCase</span><span class="o">(</span><span class="n">hosts</span><span class="o">,</span> <span class="n">host</span><span class="o">);</span>
+                <span class="o">}</span> <span class="k">finally</span> <span class="o">{</span>
+                    <span class="c1">// Make absolutely sure this gets reset</span>
+                    <span class="n">host</span><span class="o">.</span><span class="na">setOffset</span><span class="o">(</span><span class="n">offset</span><span class="o">);</span>
+                <span class="o">}</span>
+            <span class="o">}</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">mappedHost</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+                <span class="n">mappedHost</span> <span class="o">=</span> <span class="n">defaultHost</span><span class="o">;</span>
+                <span class="k">if</span> <span class="o">(</span><span class="n">mappedHost</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+                    <span class="k">return</span><span class="o">;</span>
+                <span class="o">}</span>
+            <span class="o">}</span>
+        <span class="o">}</span>
+</code></pre></div></div>
+<p>tomcat会尝试将serverName做变换，截取第一个”.”后面的数据再一次进行匹配，如果找不到则会设置默认的host，如果没有默认的host，则会结束映射过程。
+经过上面的一系列处理后找到了host，则设置对应关系，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">mappingData</span><span class="o">.</span><span class="na">host</span> <span class="o">=</span> <span class="n">mappedHost</span><span class="o">.</span><span class="na">object</span><span class="o">;</span>
+</code></pre></div></div>
+<p>找到了host之后，tomcat会继续根据url查找host中的context。</p>
+
+<ul>
+  <li>查找Context</li>
+</ul>
+
+<p>context查找过程与host查找类似，都是通过二分查找。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="n">ContextList</span> <span class="n">contextList</span> <span class="o">=</span> <span class="n">mappedHost</span><span class="o">.</span><span class="na">contextList</span><span class="o">;</span>
+        <span class="n">MappedContext</span><span class="o">[]</span> <span class="n">contexts</span> <span class="o">=</span> <span class="n">contextList</span><span class="o">.</span><span class="na">contexts</span><span class="o">;</span>
+        <span class="kt">int</span> <span class="n">pos</span> <span class="o">=</span> <span class="n">find</span><span class="o">(</span><span class="n">contexts</span><span class="o">,</span> <span class="n">uri</span><span class="o">);</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">pos</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">return</span><span class="o">;</span>
+        <span class="o">}</span>
+</code></pre></div></div>
+<p>如果pos&gt;=0，则会进入下面的代码进行精确的匹配，这是因为通过find查找到的可能是最近接uri的context。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="k">while</span> <span class="o">(</span><span class="n">pos</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">context</span> <span class="o">=</span> <span class="n">contexts</span><span class="o">[</span><span class="n">pos</span><span class="o">];</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">uri</span><span class="o">.</span><span class="na">startsWith</span><span class="o">(</span><span class="n">context</span><span class="o">.</span><span class="na">name</span><span class="o">))</span> <span class="o">{</span>
+                <span class="n">length</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="na">name</span><span class="o">.</span><span class="na">length</span><span class="o">();</span>
+                <span class="c1">// #1</span>
+                <span class="k">if</span> <span class="o">(</span><span class="n">uri</span><span class="o">.</span><span class="na">getLength</span><span class="o">()</span> <span class="o">==</span> <span class="n">length</span><span class="o">)</span> <span class="o">{</span>
+                    <span class="n">found</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+                    <span class="k">break</span><span class="o">;</span>
+                <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">uri</span><span class="o">.</span><span class="na">startsWithIgnoreCase</span><span class="o">(</span><span class="s">"/"</span><span class="o">,</span> <span class="n">length</span><span class="o">))</span> <span class="o">{</span>
+                    <span class="n">found</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+                    <span class="k">break</span><span class="o">;</span>
+                <span class="o">}</span>
+            <span class="o">}</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">lastSlash</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="o">)</span> <span class="o">{</span>
+                <span class="n">lastSlash</span> <span class="o">=</span> <span class="n">nthSlash</span><span class="o">(</span><span class="n">uri</span><span class="o">,</span> <span class="n">contextList</span><span class="o">.</span><span class="na">nesting</span> <span class="o">+</span> <span class="mi">1</span><span class="o">);</span>
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                <span class="n">lastSlash</span> <span class="o">=</span> <span class="n">lastSlash</span><span class="o">(</span><span class="n">uri</span><span class="o">);</span>
+            <span class="o">}</span>
+            <span class="n">uri</span><span class="o">.</span><span class="na">setEnd</span><span class="o">(</span><span class="n">lastSlash</span><span class="o">);</span>
+            <span class="n">pos</span> <span class="o">=</span> <span class="n">find</span><span class="o">(</span><span class="n">contexts</span><span class="o">,</span> <span class="n">uri</span><span class="o">);</span>
+        <span class="o">}</span>
+</code></pre></div></div>
+<p>上面代码的#1处就是精确匹配的代码，如果url的长度和context.name的长度一致就直接认为匹配成功。否则判断url的第length位是否是”/”，如果是则认为匹配成功。如果匹配不成功，则会对url做处理，查找出url中第contextList.nesting+1个”/”所在的位置，然后以这个位置作为结束符截断url，进行下一轮查找。Context查找之后会进行Wrapper的查找，Wrapper是对Servlet的封装。</p>
+
+<ul>
+  <li>查找Wrapper</li>
+</ul>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="c1">// Wrapper mapping</span>
+        <span class="k">if</span> <span class="o">(!</span><span class="n">contextVersion</span><span class="o">.</span><span class="na">isPaused</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">internalMapWrapper</span><span class="o">(</span><span class="n">contextVersion</span><span class="o">,</span> <span class="n">uri</span><span class="o">,</span> <span class="n">mappingData</span><span class="o">);</span>
+        <span class="o">}</span>
+</code></pre></div></div>
+<p>具体的查找过程在internalMapWrapper中，首先会根据匹配出的Context和url，提取出Servelt对应的名字。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="kt">int</span> <span class="n">pathOffset</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="na">getOffset</span><span class="o">();</span>
+        <span class="kt">int</span> <span class="n">pathEnd</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="na">getEnd</span><span class="o">();</span>
+        <span class="kt">boolean</span> <span class="n">noServletPath</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+
+        <span class="kt">int</span> <span class="n">length</span> <span class="o">=</span> <span class="n">contextVersion</span><span class="o">.</span><span class="na">path</span><span class="o">.</span><span class="na">length</span><span class="o">();</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">length</span> <span class="o">==</span> <span class="o">(</span><span class="n">pathEnd</span> <span class="o">-</span> <span class="n">pathOffset</span><span class="o">))</span> <span class="o">{</span>
+            <span class="n">noServletPath</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+        <span class="o">}</span>
+        <span class="kt">int</span> <span class="n">servletPath</span> <span class="o">=</span> <span class="n">pathOffset</span> <span class="o">+</span> <span class="n">length</span><span class="o">;</span>
+        <span class="n">path</span><span class="o">.</span><span class="na">setOffset</span><span class="o">(</span><span class="n">servletPath</span><span class="o">);</span>
+</code></pre></div></div>
+<p>然后根据对应的规则查找Wrapper，</p>
+
+<p><strong>规则1 精准匹配</strong></p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="cm">/**
+     * Exact mapping.
+     */</span>
+    <span class="kd">private</span> <span class="kd">final</span> <span class="kt">void</span> <span class="nf">internalMapExactWrapper</span>
+        <span class="o">(</span><span class="n">MappedWrapper</span><span class="o">[]</span> <span class="n">wrappers</span><span class="o">,</span> <span class="n">CharChunk</span> <span class="n">path</span><span class="o">,</span> <span class="n">MappingData</span> <span class="n">mappingData</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">MappedWrapper</span> <span class="n">wrapper</span> <span class="o">=</span> <span class="n">exactFind</span><span class="o">(</span><span class="n">wrappers</span><span class="o">,</span> <span class="n">path</span><span class="o">);</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">wrapper</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">mappingData</span><span class="o">.</span><span class="na">requestPath</span><span class="o">.</span><span class="na">setString</span><span class="o">(</span><span class="n">wrapper</span><span class="o">.</span><span class="na">name</span><span class="o">);</span>
+            <span class="n">mappingData</span><span class="o">.</span><span class="na">wrapper</span> <span class="o">=</span> <span class="n">wrapper</span><span class="o">.</span><span class="na">object</span><span class="o">;</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">path</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="s">"/"</span><span class="o">))</span> <span class="o">{</span>
+                <span class="c1">// Special handling for Context Root mapped servlet</span>
+                <span class="n">mappingData</span><span class="o">.</span><span class="na">pathInfo</span><span class="o">.</span><span class="na">setString</span><span class="o">(</span><span class="s">"/"</span><span class="o">);</span>
+                <span class="n">mappingData</span><span class="o">.</span><span class="na">wrapperPath</span><span class="o">.</span><span class="na">setString</span><span class="o">(</span><span class="s">""</span><span class="o">);</span>
+                <span class="c1">// This seems wrong but it is what the spec says...</span>
+                <span class="n">mappingData</span><span class="o">.</span><span class="na">contextPath</span><span class="o">.</span><span class="na">setString</span><span class="o">(</span><span class="s">""</span><span class="o">);</span>
+                <span class="n">mappingData</span><span class="o">.</span><span class="na">matchType</span> <span class="o">=</span> <span class="n">MappingMatch</span><span class="o">.</span><span class="na">CONTEXT_ROOT</span><span class="o">;</span>
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                <span class="n">mappingData</span><span class="o">.</span><span class="na">wrapperPath</span><span class="o">.</span><span class="na">setString</span><span class="o">(</span><span class="n">wrapper</span><span class="o">.</span><span class="na">name</span><span class="o">);</span>
+                <span class="n">mappingData</span><span class="o">.</span><span class="na">matchType</span> <span class="o">=</span> <span class="n">MappingMatch</span><span class="o">.</span><span class="na">EXACT</span><span class="o">;</span>
+            <span class="o">}</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+</code></pre></div></div>
+<p>exactFind查找对应的Wrapper后会进一步判断path是否等于”/”，如果相等则设置matchType为CONTEXT_ROOT，否则设置为EXACT</p>
+
+<p><strong>规则2 前缀匹配</strong></p>
+
+<p>如果规则1没有查找到，则会使用前缀匹配。所谓的前缀匹配是指Servlet配置的url是”/aaa/bb/<em>“这种带有通配符的url，需要注意的是”/aaa/</em>/bb”这种不属于前缀匹配而应该是精准匹配。前缀匹配的规则存放在wildcardWrappers中，如果我们设置的url规则是”/aaa/bb/*“，那么在wildcardWrappers中存放的就是”/aaa/bb”，如果用户访问的path是”/aaa/bb/ccc”，就会匹配成功。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="c1">// Rule 2 -- Prefix Match</span>
+        <span class="kt">boolean</span> <span class="n">checkJspWelcomeFiles</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+        <span class="n">MappedWrapper</span><span class="o">[]</span> <span class="n">wildcardWrappers</span> <span class="o">=</span> <span class="n">contextVersion</span><span class="o">.</span><span class="na">wildcardWrappers</span><span class="o">;</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">mappingData</span><span class="o">.</span><span class="na">wrapper</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">internalMapWildcardWrapper</span><span class="o">(</span><span class="n">wildcardWrappers</span><span class="o">,</span> <span class="n">contextVersion</span><span class="o">.</span><span class="na">nesting</span><span class="o">,</span>
+                                       <span class="n">path</span><span class="o">,</span> <span class="n">mappingData</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">mappingData</span><span class="o">.</span><span class="na">wrapper</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="n">mappingData</span><span class="o">.</span><span class="na">jspWildCard</span><span class="o">)</span> <span class="o">{</span>
+                <span class="kt">char</span><span class="o">[]</span> <span class="n">buf</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="na">getBuffer</span><span class="o">();</span>
+                <span class="k">if</span> <span class="o">(</span><span class="n">buf</span><span class="o">[</span><span class="n">pathEnd</span> <span class="o">-</span> <span class="mi">1</span><span class="o">]</span> <span class="o">==</span> <span class="sc">'/'</span><span class="o">)</span> <span class="o">{</span>
+                    <span class="n">mappingData</span><span class="o">.</span><span class="na">wrapper</span> <span class="o">=</span> <span class="kc">null</span><span class="o">;</span>
+                    <span class="n">checkJspWelcomeFiles</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+                <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                    <span class="c1">// See Bugzilla 27704</span>
+                    <span class="n">mappingData</span><span class="o">.</span><span class="na">wrapperPath</span><span class="o">.</span><span class="na">setChars</span><span class="o">(</span><span class="n">buf</span><span class="o">,</span> <span class="n">path</span><span class="o">.</span><span class="na">getStart</span><span class="o">(),</span>
+                                                     <span class="n">path</span><span class="o">.</span><span class="na">getLength</span><span class="o">());</span>
+                    <span class="n">mappingData</span><span class="o">.</span><span class="na">pathInfo</span><span class="o">.</span><span class="na">recycle</span><span class="o">();</span>
+                <span class="o">}</span>
+            <span class="o">}</span>
+        <span class="o">}</span>
+
+        <span class="k">if</span><span class="o">(</span><span class="n">mappingData</span><span class="o">.</span><span class="na">wrapper</span> <span class="o">==</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="n">noServletPath</span> <span class="o">&amp;&amp;</span>
+                <span class="n">contextVersion</span><span class="o">.</span><span class="na">object</span><span class="o">.</span><span class="na">getMapperContextRootRedirectEnabled</span><span class="o">())</span> <span class="o">{</span>
+            <span class="c1">// The path is empty, redirect to "/"</span>
+            <span class="n">path</span><span class="o">.</span><span class="na">append</span><span class="o">(</span><span class="sc">'/'</span><span class="o">);</span>
+            <span class="n">pathEnd</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="na">getEnd</span><span class="o">();</span>
+            <span class="n">mappingData</span><span class="o">.</span><span class="na">redirectPath</span><span class="o">.</span><span class="na">setChars</span>
+                <span class="o">(</span><span class="n">path</span><span class="o">.</span><span class="na">getBuffer</span><span class="o">(),</span> <span class="n">pathOffset</span><span class="o">,</span> <span class="n">pathEnd</span> <span class="o">-</span> <span class="n">pathOffset</span><span class="o">);</span>
+            <span class="n">path</span><span class="o">.</span><span class="na">setEnd</span><span class="o">(</span><span class="n">pathEnd</span> <span class="o">-</span> <span class="mi">1</span><span class="o">);</span>
+            <span class="k">return</span><span class="o">;</span>
+        <span class="o">}</span>
+</code></pre></div></div>
+
+<p><strong>规则3 扩展匹配</strong></p>
+
+<p>如果精确匹配和前缀匹配都没有成功，则进入扩展匹配。所谓的扩展匹配是指Servlet配置的url是”<em>.json”这种带有后缀扩展的url。扩展匹配的规则存放在extensionWrappers中，默认情况下extensionWrappers会有两个规则，一个用于匹配所有jsp的，一个用于匹配所有jspx的。如果我们设置的url规则是”</em>.json”，那么extensionWrappers中就会新增一个匹配规则匹配所有以json结尾的请求。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        <span class="c1">// Rule 3 -- Extension Match</span>
+        <span class="n">MappedWrapper</span><span class="o">[]</span> <span class="n">extensionWrappers</span> <span class="o">=</span> <span class="n">contextVersion</span><span class="o">.</span><span class="na">extensionWrappers</span><span class="o">;</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">mappingData</span><span class="o">.</span><span class="na">wrapper</span> <span class="o">==</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">checkJspWelcomeFiles</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">internalMapExtensionWrapper</span><span class="o">(</span><span class="n">extensionWrappers</span><span class="o">,</span> <span class="n">path</span><span class="o">,</span> <span class="n">mappingData</span><span class="o">,</span>
+                    <span class="kc">true</span><span class="o">);</span>
+        <span class="o">}</span>
+</code></pre></div></div>
+
+<p><strong>规则4 默认欢迎页</strong></p>
+
+<p>如果访问路径是/，那么会分别尝试在/后面添加index.jsp，index.html或者index.htm，然后尝试使用精确匹配和前缀匹配等规则进行匹配。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>                    <span class="c1">// Rule 4a -- Welcome resources processing for exact macth</span>
+                    <span class="n">internalMapExactWrapper</span><span class="o">(</span><span class="n">exactWrappers</span><span class="o">,</span> <span class="n">path</span><span class="o">,</span> <span class="n">mappingData</span><span class="o">);</span>
+
+                    <span class="c1">// Rule 4b -- Welcome resources processing for prefix match</span>
+                    <span class="k">if</span> <span class="o">(</span><span class="n">mappingData</span><span class="o">.</span><span class="na">wrapper</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+                        <span class="n">internalMapWildcardWrapper</span>
+                            <span class="o">(</span><span class="n">wildcardWrappers</span><span class="o">,</span> <span class="n">contextVersion</span><span class="o">.</span><span class="na">nesting</span><span class="o">,</span>
+                             <span class="n">path</span><span class="o">,</span> <span class="n">mappingData</span><span class="o">);</span>
+                    <span class="o">}</span>
+                    
+                    <span class="c1">// Rule 4c -- Welcome resources processing</span>
+                    <span class="c1">//            for physical folder</span>
+                    <span class="k">if</span> <span class="o">(</span><span class="n">mappingData</span><span class="o">.</span><span class="na">wrapper</span> <span class="o">==</span> <span class="kc">null</span>
+                        <span class="o">&amp;&amp;</span> <span class="n">contextVersion</span><span class="o">.</span><span class="na">resources</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+                        <span class="n">String</span> <span class="n">pathStr</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="na">toString</span><span class="o">();</span>
+                        <span class="n">WebResource</span> <span class="n">file</span> <span class="o">=</span>
+                                <span class="n">contextVersion</span><span class="o">.</span><span class="na">resources</span><span class="o">.</span><span class="na">getResource</span><span class="o">(</span><span class="n">pathStr</span><span class="o">);</span>
+                        <span class="k">if</span> <span class="o">(</span><span class="n">file</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="n">file</span><span class="o">.</span><span class="na">isFile</span><span class="o">())</span> <span class="o">{</span>
+                            <span class="n">internalMapExtensionWrapper</span><span class="o">(</span><span class="n">extensionWrappers</span><span class="o">,</span> <span class="n">path</span><span class="o">,</span>
+                                                        <span class="n">mappingData</span><span class="o">,</span> <span class="kc">true</span><span class="o">);</span>
+                            <span class="k">if</span> <span class="o">(</span><span class="n">mappingData</span><span class="o">.</span><span class="na">wrapper</span> <span class="o">==</span> <span class="kc">null</span>
+                                <span class="o">&amp;&amp;</span> <span class="n">contextVersion</span><span class="o">.</span><span class="na">defaultWrapper</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+                                <span class="n">mappingData</span><span class="o">.</span><span class="na">wrapper</span> <span class="o">=</span>
+                                    <span class="n">contextVersion</span><span class="o">.</span><span class="na">defaultWrapper</span><span class="o">.</span><span class="na">object</span><span class="o">;</span>
+                                <span class="n">mappingData</span><span class="o">.</span><span class="na">requestPath</span><span class="o">.</span><span class="na">setChars</span>
+                                    <span class="o">(</span><span class="n">path</span><span class="o">.</span><span class="na">getBuffer</span><span class="o">(),</span> <span class="n">path</span><span class="o">.</span><span class="na">getStart</span><span class="o">(),</span>
+                                     <span class="n">path</span><span class="o">.</span><span class="na">getLength</span><span class="o">());</span>
+                                <span class="n">mappingData</span><span class="o">.</span><span class="na">wrapperPath</span><span class="o">.</span><span class="na">setChars</span>
+                                    <span class="o">(</span><span class="n">path</span><span class="o">.</span><span class="na">getBuffer</span><span class="o">(),</span> <span class="n">path</span><span class="o">.</span><span class="na">getStart</span><span class="o">(),</span>
+                                     <span class="n">path</span><span class="o">.</span><span class="na">getLength</span><span class="o">());</span>
+                                <span class="n">mappingData</span><span class="o">.</span><span class="na">requestPath</span><span class="o">.</span><span class="na">setString</span><span class="o">(</span><span class="n">pathStr</span><span class="o">);</span>
+                                <span class="n">mappingData</span><span class="o">.</span><span class="na">wrapperPath</span><span class="o">.</span><span class="na">setString</span><span class="o">(</span><span class="n">pathStr</span><span class="o">);</span>
+                            <span class="o">}</span>
+                        <span class="o">}</span>
+                    <span class="o">}</span>
+</code></pre></div></div>
+<p>在规则4c中会尝试访问物理路径的文件。</p>
+
+<p><strong>规则5 默认Wrapper</strong></p>
+
+<p>如果以上规则都没有匹配成功，则会使用默认的Wrapper，默认的Wrapper封装了org.apache.catalina.servlets.DefaultServlet。</p>
+
+<h2 id="4-转发">4. 转发</h2>
+<p>在解析context, wrapper的时候有可能会设置redirectPath，这时候tomcat返回302</p>
+
+<h2 id="5-处理trace请求">5. 处理trace请求</h2>
+<p>如果服务器设置了不允许trace，并且当前请求是trace，则返回405</p>
+
+<h1 id="请求处理">请求处理</h1>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">connector</span><span class="o">.</span><span class="na">getService</span><span class="o">().</span><span class="na">getContainer</span><span class="o">().</span><span class="na">getPipeline</span><span class="o">().</span><span class="na">getFirst</span><span class="o">().</span><span class="na">invoke</span><span class="o">(</span><span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">);</span>
+</code></pre></div></div>
+<p>获取service中的Container，这时候Container是StandardEngine。然后获取pipeline，此时pipeline中是StandardEngineValve，然后调用StandardEngineValve的invoke方法。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="kd">public</span> <span class="kd">final</span> <span class="kt">void</span> <span class="nf">invoke</span><span class="o">(</span><span class="n">Request</span> <span class="n">request</span><span class="o">,</span> <span class="n">Response</span> <span class="n">response</span><span class="o">)</span>
+        <span class="kd">throws</span> <span class="n">IOException</span><span class="o">,</span> <span class="n">ServletException</span> <span class="o">{</span>
+
+        <span class="c1">// Select the Host to be used for this Request</span>
+        <span class="n">Host</span> <span class="n">host</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="na">getHost</span><span class="o">();</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">host</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">response</span><span class="o">.</span><span class="na">sendError</span>
+                <span class="o">(</span><span class="n">HttpServletResponse</span><span class="o">.</span><span class="na">SC_BAD_REQUEST</span><span class="o">,</span>
+                 <span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"standardEngine.noHost"</span><span class="o">,</span>
+                              <span class="n">request</span><span class="o">.</span><span class="na">getServerName</span><span class="o">()));</span>
+            <span class="k">return</span><span class="o">;</span>
+        <span class="o">}</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">request</span><span class="o">.</span><span class="na">isAsyncSupported</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">request</span><span class="o">.</span><span class="na">setAsyncSupported</span><span class="o">(</span><span class="n">host</span><span class="o">.</span><span class="na">getPipeline</span><span class="o">().</span><span class="na">isAsyncSupported</span><span class="o">());</span>
+        <span class="o">}</span>
+
+        <span class="c1">// Ask this Host to process this request</span>
+        <span class="n">host</span><span class="o">.</span><span class="na">getPipeline</span><span class="o">().</span><span class="na">getFirst</span><span class="o">().</span><span class="na">invoke</span><span class="o">(</span><span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">);</span>
+
+    <span class="o">}</span>
+</code></pre></div></div>
+<p>获取Host之后，依次获取Host的pipeline，pipeline中的第一个valve，调用invoke继续处理。此时pipeline的first是AccessLogValve，AccessLogValve的invoke方法主要负责调用下一个valve，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">invoke</span><span class="o">(</span><span class="n">Request</span> <span class="n">request</span><span class="o">,</span> <span class="n">Response</span> <span class="n">response</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">IOException</span><span class="o">,</span>
+            <span class="n">ServletException</span> <span class="o">{</span>
+        <span class="n">getNext</span><span class="o">().</span><span class="na">invoke</span><span class="o">(</span><span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">);</span>
+    <span class="o">}</span>
+</code></pre></div></div>
+<p>AccessLogValue的下一个valve是ErrorReportValue，ErrorReportValue首先调用下一个value继续处理，等处理结束后判断response.getStatus()是否是大于等400的或者抛出了错误，如果是则返回相应的错误信息。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">invoke</span><span class="o">(</span><span class="n">Request</span> <span class="n">request</span><span class="o">,</span> <span class="n">Response</span> <span class="n">response</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">IOException</span><span class="o">,</span> <span class="n">ServletException</span> <span class="o">{</span>
+
+        <span class="c1">// Perform the request</span>
+        <span class="n">getNext</span><span class="o">().</span><span class="na">invoke</span><span class="o">(</span><span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">);</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">response</span><span class="o">.</span><span class="na">isCommitted</span><span class="o">())</span> <span class="o">{</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">response</span><span class="o">.</span><span class="na">setErrorReported</span><span class="o">())</span> <span class="o">{</span>
+                <span class="c1">// Error wasn't previously reported but we can't write an error</span>
+                <span class="c1">// page because the response has already been committed. Attempt</span>
+                <span class="c1">// to flush any data that is still to be written to the client.</span>
+                <span class="k">try</span> <span class="o">{</span>
+                    <span class="n">response</span><span class="o">.</span><span class="na">flushBuffer</span><span class="o">();</span>
+                <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">t</span><span class="o">)</span> <span class="o">{</span>
+                    <span class="n">ExceptionUtils</span><span class="o">.</span><span class="na">handleThrowable</span><span class="o">(</span><span class="n">t</span><span class="o">);</span>
+                <span class="o">}</span>
+                <span class="c1">// Close immediately to signal to the client that something went</span>
+                <span class="c1">// wrong</span>
+                <span class="n">response</span><span class="o">.</span><span class="na">getCoyoteResponse</span><span class="o">().</span><span class="na">action</span><span class="o">(</span><span class="n">ActionCode</span><span class="o">.</span><span class="na">CLOSE_NOW</span><span class="o">,</span> <span class="kc">null</span><span class="o">);</span>
+            <span class="o">}</span>
+            <span class="k">return</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="n">Throwable</span> <span class="n">throwable</span> <span class="o">=</span> <span class="o">(</span><span class="n">Throwable</span><span class="o">)</span> <span class="n">request</span><span class="o">.</span><span class="na">getAttribute</span><span class="o">(</span><span class="n">RequestDispatcher</span><span class="o">.</span><span class="na">ERROR_EXCEPTION</span><span class="o">);</span>
+
+        <span class="c1">// If an async request is in progress and is not going to end once this</span>
+        <span class="c1">// container thread finishes, do not process any error page here.</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">request</span><span class="o">.</span><span class="na">isAsync</span><span class="o">()</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">request</span><span class="o">.</span><span class="na">isAsyncCompleting</span><span class="o">())</span> <span class="o">{</span>
+            <span class="k">return</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">throwable</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">response</span><span class="o">.</span><span class="na">isError</span><span class="o">())</span> <span class="o">{</span>
+            <span class="c1">// Make sure that the necessary methods have been called on the</span>
+            <span class="c1">// response. (It is possible a component may just have set the</span>
+            <span class="c1">// Throwable. Tomcat won't do that but other components might.)</span>
+            <span class="c1">// These are safe to call at this point as we know that the response</span>
+            <span class="c1">// has not been committed.</span>
+            <span class="n">response</span><span class="o">.</span><span class="na">reset</span><span class="o">();</span>
+            <span class="n">response</span><span class="o">.</span><span class="na">sendError</span><span class="o">(</span><span class="n">HttpServletResponse</span><span class="o">.</span><span class="na">SC_INTERNAL_SERVER_ERROR</span><span class="o">);</span>
+        <span class="o">}</span>
+
+        <span class="c1">// One way or another, response.sendError() will have been called before</span>
+        <span class="c1">// execution reaches this point and suspended the response. Need to</span>
+        <span class="c1">// reverse that so this valve can write to the response.</span>
+        <span class="n">response</span><span class="o">.</span><span class="na">setSuspended</span><span class="o">(</span><span class="kc">false</span><span class="o">);</span>
+
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="n">report</span><span class="o">(</span><span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">,</span> <span class="n">throwable</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">tt</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">ExceptionUtils</span><span class="o">.</span><span class="na">handleThrowable</span><span class="o">(</span><span class="n">tt</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+</code></pre></div></div>
+<p>ErrorReportValue的下一个valve是StandardHostValve，StandardHostValve首先会获取request对应的Context, 然后调用StandardContextValve的invoke进行处理。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="kd">public</span> <span class="kd">final</span> <span class="kt">void</span> <span class="nf">invoke</span><span class="o">(</span><span class="n">Request</span> <span class="n">request</span><span class="o">,</span> <span class="n">Response</span> <span class="n">response</span><span class="o">)</span>
+        <span class="kd">throws</span> <span class="n">IOException</span><span class="o">,</span> <span class="n">ServletException</span> <span class="o">{</span>
+
+        <span class="c1">// Disallow any direct access to resources under WEB-INF or META-INF</span>
+        <span class="n">MessageBytes</span> <span class="n">requestPathMB</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="na">getRequestPathMB</span><span class="o">();</span>
+        <span class="k">if</span> <span class="o">((</span><span class="n">requestPathMB</span><span class="o">.</span><span class="na">startsWithIgnoreCase</span><span class="o">(</span><span class="s">"/META-INF/"</span><span class="o">,</span> <span class="mi">0</span><span class="o">))</span>
+                <span class="o">||</span> <span class="o">(</span><span class="n">requestPathMB</span><span class="o">.</span><span class="na">equalsIgnoreCase</span><span class="o">(</span><span class="s">"/META-INF"</span><span class="o">))</span>
+                <span class="o">||</span> <span class="o">(</span><span class="n">requestPathMB</span><span class="o">.</span><span class="na">startsWithIgnoreCase</span><span class="o">(</span><span class="s">"/WEB-INF/"</span><span class="o">,</span> <span class="mi">0</span><span class="o">))</span>
+                <span class="o">||</span> <span class="o">(</span><span class="n">requestPathMB</span><span class="o">.</span><span class="na">equalsIgnoreCase</span><span class="o">(</span><span class="s">"/WEB-INF"</span><span class="o">)))</span> <span class="o">{</span>
+            <span class="n">response</span><span class="o">.</span><span class="na">sendError</span><span class="o">(</span><span class="n">HttpServletResponse</span><span class="o">.</span><span class="na">SC_NOT_FOUND</span><span class="o">);</span>
+            <span class="k">return</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="c1">// Select the Wrapper to be used for this Request</span>
+        <span class="n">Wrapper</span> <span class="n">wrapper</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="na">getWrapper</span><span class="o">();</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">wrapper</span> <span class="o">==</span> <span class="kc">null</span> <span class="o">||</span> <span class="n">wrapper</span><span class="o">.</span><span class="na">isUnavailable</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">response</span><span class="o">.</span><span class="na">sendError</span><span class="o">(</span><span class="n">HttpServletResponse</span><span class="o">.</span><span class="na">SC_NOT_FOUND</span><span class="o">);</span>
+            <span class="k">return</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="c1">// Acknowledge the request</span>
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="n">response</span><span class="o">.</span><span class="na">sendAcknowledgement</span><span class="o">();</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">IOException</span> <span class="n">ioe</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">container</span><span class="o">.</span><span class="na">getLogger</span><span class="o">().</span><span class="na">error</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span>
+                    <span class="s">"standardContextValve.acknowledgeException"</span><span class="o">),</span> <span class="n">ioe</span><span class="o">);</span>
+            <span class="n">request</span><span class="o">.</span><span class="na">setAttribute</span><span class="o">(</span><span class="n">RequestDispatcher</span><span class="o">.</span><span class="na">ERROR_EXCEPTION</span><span class="o">,</span> <span class="n">ioe</span><span class="o">);</span>
+            <span class="n">response</span><span class="o">.</span><span class="na">sendError</span><span class="o">(</span><span class="n">HttpServletResponse</span><span class="o">.</span><span class="na">SC_INTERNAL_SERVER_ERROR</span><span class="o">);</span>
+            <span class="k">return</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">request</span><span class="o">.</span><span class="na">isAsyncSupported</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">request</span><span class="o">.</span><span class="na">setAsyncSupported</span><span class="o">(</span><span class="n">wrapper</span><span class="o">.</span><span class="na">getPipeline</span><span class="o">().</span><span class="na">isAsyncSupported</span><span class="o">());</span>
+        <span class="o">}</span>
+        <span class="n">wrapper</span><span class="o">.</span><span class="na">getPipeline</span><span class="o">().</span><span class="na">getFirst</span><span class="o">().</span><span class="na">invoke</span><span class="o">(</span><span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">);</span>
+    <span class="o">}</span>
+</code></pre></div></div>
+<p>上面代码主要分为以下几个部分，</p>
+
+<ul>
+  <li>对于直接访问WEB-INF和META-INF下面资源的请求返回404</li>
+  <li>如果没有wrapper则返回404</li>
+  <li>调用StandardWrapperValve继续处理</li>
+</ul>
+
+<p>StandardWrapper会根据配置的filter，创建filter chain，然后调用filter chain中的每一个filter对request进行预处理，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="kd">private</span> <span class="kt">void</span> <span class="nf">internalDoFilter</span><span class="o">(</span><span class="n">ServletRequest</span> <span class="n">request</span><span class="o">,</span>
+                                  <span class="n">ServletResponse</span> <span class="n">response</span><span class="o">)</span>
+        <span class="kd">throws</span> <span class="n">IOException</span><span class="o">,</span> <span class="n">ServletException</span> <span class="o">{</span>
+
+        <span class="c1">// Call the next filter if there is one</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">pos</span> <span class="o">&lt;</span> <span class="n">n</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">ApplicationFilterConfig</span> <span class="n">filterConfig</span> <span class="o">=</span> <span class="n">filters</span><span class="o">[</span><span class="n">pos</span><span class="o">++];</span>
+            <span class="k">try</span> <span class="o">{</span>
+                <span class="n">Filter</span> <span class="n">filter</span> <span class="o">=</span> <span class="n">filterConfig</span><span class="o">.</span><span class="na">getFilter</span><span class="o">();</span>
+
+                <span class="k">if</span> <span class="o">(</span><span class="n">request</span><span class="o">.</span><span class="na">isAsyncSupported</span><span class="o">()</span> <span class="o">&amp;&amp;</span> <span class="s">"false"</span><span class="o">.</span><span class="na">equalsIgnoreCase</span><span class="o">(</span>
+                        <span class="n">filterConfig</span><span class="o">.</span><span class="na">getFilterDef</span><span class="o">().</span><span class="na">getAsyncSupported</span><span class="o">()))</span> <span class="o">{</span>
+                    <span class="n">request</span><span class="o">.</span><span class="na">setAttribute</span><span class="o">(</span><span class="n">Globals</span><span class="o">.</span><span class="na">ASYNC_SUPPORTED_ATTR</span><span class="o">,</span> <span class="n">Boolean</span><span class="o">.</span><span class="na">FALSE</span><span class="o">);</span>
+                <span class="o">}</span>
+                <span class="k">if</span><span class="o">(</span> <span class="n">Globals</span><span class="o">.</span><span class="na">IS_SECURITY_ENABLED</span> <span class="o">)</span> <span class="o">{</span>
+                    <span class="kd">final</span> <span class="n">ServletRequest</span> <span class="n">req</span> <span class="o">=</span> <span class="n">request</span><span class="o">;</span>
+                    <span class="kd">final</span> <span class="n">ServletResponse</span> <span class="n">res</span> <span class="o">=</span> <span class="n">response</span><span class="o">;</span>
+                    <span class="n">Principal</span> <span class="n">principal</span> <span class="o">=</span>
+                        <span class="o">((</span><span class="n">HttpServletRequest</span><span class="o">)</span> <span class="n">req</span><span class="o">).</span><span class="na">getUserPrincipal</span><span class="o">();</span>
+
+                    <span class="n">Object</span><span class="o">[]</span> <span class="n">args</span> <span class="o">=</span> <span class="k">new</span> <span class="n">Object</span><span class="o">[]{</span><span class="n">req</span><span class="o">,</span> <span class="n">res</span><span class="o">,</span> <span class="k">this</span><span class="o">};</span>
+                    <span class="n">SecurityUtil</span><span class="o">.</span><span class="na">doAsPrivilege</span> <span class="o">(</span><span class="s">"doFilter"</span><span class="o">,</span> <span class="n">filter</span><span class="o">,</span> <span class="n">classType</span><span class="o">,</span> <span class="n">args</span><span class="o">,</span> <span class="n">principal</span><span class="o">);</span>
+                <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                    <span class="c1">// #1</span>
+                    <span class="n">filter</span><span class="o">.</span><span class="na">doFilter</span><span class="o">(</span><span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">,</span> <span class="k">this</span><span class="o">);</span>
+                <span class="o">}</span>
+            <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">IOException</span> <span class="o">|</span> <span class="n">ServletException</span> <span class="o">|</span> <span class="n">RuntimeException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+                <span class="k">throw</span> <span class="n">e</span><span class="o">;</span>
+            <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+                <span class="n">e</span> <span class="o">=</span> <span class="n">ExceptionUtils</span><span class="o">.</span><span class="na">unwrapInvocationTargetException</span><span class="o">(</span><span class="n">e</span><span class="o">);</span>
+                <span class="n">ExceptionUtils</span><span class="o">.</span><span class="na">handleThrowable</span><span class="o">(</span><span class="n">e</span><span class="o">);</span>
+                <span class="k">throw</span> <span class="k">new</span> <span class="nf">ServletException</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"filterChain.filter"</span><span class="o">),</span> <span class="n">e</span><span class="o">);</span>
+            <span class="o">}</span>
+            <span class="k">return</span><span class="o">;</span>
+        <span class="o">}</span>
+
+        <span class="c1">// We fell off the end of the chain -- call the servlet instance</span>
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">ApplicationDispatcher</span><span class="o">.</span><span class="na">WRAP_SAME_OBJECT</span><span class="o">)</span> <span class="o">{</span>
+                <span class="n">lastServicedRequest</span><span class="o">.</span><span class="na">set</span><span class="o">(</span><span class="n">request</span><span class="o">);</span>
+                <span class="n">lastServicedResponse</span><span class="o">.</span><span class="na">set</span><span class="o">(</span><span class="n">response</span><span class="o">);</span>
+            <span class="o">}</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">request</span><span class="o">.</span><span class="na">isAsyncSupported</span><span class="o">()</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">servletSupportsAsync</span><span class="o">)</span> <span class="o">{</span>
+                <span class="n">request</span><span class="o">.</span><span class="na">setAttribute</span><span class="o">(</span><span class="n">Globals</span><span class="o">.</span><span class="na">ASYNC_SUPPORTED_ATTR</span><span class="o">,</span>
+                        <span class="n">Boolean</span><span class="o">.</span><span class="na">FALSE</span><span class="o">);</span>
+            <span class="o">}</span>
+            <span class="c1">// Use potentially wrapped request from this point</span>
+            <span class="k">if</span> <span class="o">((</span><span class="n">request</span> <span class="k">instanceof</span> <span class="n">HttpServletRequest</span><span class="o">)</span> <span class="o">&amp;&amp;</span>
+                    <span class="o">(</span><span class="n">response</span> <span class="k">instanceof</span> <span class="n">HttpServletResponse</span><span class="o">)</span> <span class="o">&amp;&amp;</span>
+                    <span class="n">Globals</span><span class="o">.</span><span class="na">IS_SECURITY_ENABLED</span> <span class="o">)</span> <span class="o">{</span>
+                <span class="kd">final</span> <span class="n">ServletRequest</span> <span class="n">req</span> <span class="o">=</span> <span class="n">request</span><span class="o">;</span>
+                <span class="kd">final</span> <span class="n">ServletResponse</span> <span class="n">res</span> <span class="o">=</span> <span class="n">response</span><span class="o">;</span>
+                <span class="n">Principal</span> <span class="n">principal</span> <span class="o">=</span>
+                    <span class="o">((</span><span class="n">HttpServletRequest</span><span class="o">)</span> <span class="n">req</span><span class="o">).</span><span class="na">getUserPrincipal</span><span class="o">();</span>
+                <span class="n">Object</span><span class="o">[]</span> <span class="n">args</span> <span class="o">=</span> <span class="k">new</span> <span class="n">Object</span><span class="o">[]{</span><span class="n">req</span><span class="o">,</span> <span class="n">res</span><span class="o">};</span>
+                <span class="n">SecurityUtil</span><span class="o">.</span><span class="na">doAsPrivilege</span><span class="o">(</span><span class="s">"service"</span><span class="o">,</span>
+                                           <span class="n">servlet</span><span class="o">,</span>
+                                           <span class="n">classTypeUsedInService</span><span class="o">,</span>
+                                           <span class="n">args</span><span class="o">,</span>
+                                           <span class="n">principal</span><span class="o">);</span>
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+                <span class="c1">// #2</span>
+                <span class="n">servlet</span><span class="o">.</span><span class="na">service</span><span class="o">(</span><span class="n">request</span><span class="o">,</span> <span class="n">response</span><span class="o">);</span>
+            <span class="o">}</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">IOException</span> <span class="o">|</span> <span class="n">ServletException</span> <span class="o">|</span> <span class="n">RuntimeException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">throw</span> <span class="n">e</span><span class="o">;</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">e</span> <span class="o">=</span> <span class="n">ExceptionUtils</span><span class="o">.</span><span class="na">unwrapInvocationTargetException</span><span class="o">(</span><span class="n">e</span><span class="o">);</span>
+            <span class="n">ExceptionUtils</span><span class="o">.</span><span class="na">handleThrowable</span><span class="o">(</span><span class="n">e</span><span class="o">);</span>
+            <span class="k">throw</span> <span class="k">new</span> <span class="nf">ServletException</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"filterChain.servlet"</span><span class="o">),</span> <span class="n">e</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">finally</span> <span class="o">{</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">ApplicationDispatcher</span><span class="o">.</span><span class="na">WRAP_SAME_OBJECT</span><span class="o">)</span> <span class="o">{</span>
+                <span class="n">lastServicedRequest</span><span class="o">.</span><span class="na">set</span><span class="o">(</span><span class="kc">null</span><span class="o">);</span>
+                <span class="n">lastServicedResponse</span><span class="o">.</span><span class="na">set</span><span class="o">(</span><span class="kc">null</span><span class="o">);</span>
+            <span class="o">}</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+</code></pre></div></div>
+<p>在上面的#1处会逐个调用filter。当所有filter处理结束后调用对应的Servlet做处理，如上面代码#2处所示。到这里request的处理基本上就结束了。</p>

@@ -1,0 +1,732 @@
+<!-- TOC -->
+
+<ul>
+  <li><a href="#初始化bean-factory-查找bean的所有定义">初始化bean factory, 查找bean的所有定义</a>
+    <ul>
+      <li><a href="#默认的namespace">默认的namespace</a></li>
+      <li><a href="#自定义namespace">自定义namespace</a></li>
+    </ul>
+  </li>
+  <li><a href="#配置bean-factory">配置bean factory</a></li>
+  <li><a href="#初始化事件广播器">初始化事件广播器</a></li>
+  <li><a href="#子类初始化方法">子类初始化方法</a></li>
+  <li><a href="#注册事件监听器">注册事件监听器</a></li>
+  <li><a href="#根据查找到的所有定义的bean进行初始化">根据查找到的所有定义的bean，进行初始化</a></li>
+</ul>
+
+<!-- /TOC -->
+<p>spring的启动过程在AbstractApplicationContext的refresh函数中，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="nd">@Override</span>
+	<span class="kd">public</span> <span class="kt">void</span> <span class="nf">refresh</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">BeansException</span><span class="o">,</span> <span class="n">IllegalStateException</span> <span class="o">{</span>
+		<span class="kd">synchronized</span> <span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">startupShutdownMonitor</span><span class="o">)</span> <span class="o">{</span>
+			<span class="c1">// Prepare this context for refreshing.</span>
+			<span class="n">prepareRefresh</span><span class="o">();</span>
+
+			<span class="c1">// Tell the subclass to refresh the internal bean factory.</span>
+			<span class="n">ConfigurableListableBeanFactory</span> <span class="n">beanFactory</span> <span class="o">=</span> <span class="n">obtainFreshBeanFactory</span><span class="o">();</span>
+
+			<span class="c1">// Prepare the bean factory for use in this context.</span>
+			<span class="n">prepareBeanFactory</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+
+			<span class="k">try</span> <span class="o">{</span>
+				<span class="c1">// Allows post-processing of the bean factory in context subclasses.</span>
+				<span class="n">postProcessBeanFactory</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+
+				<span class="c1">// Invoke factory processors registered as beans in the context.</span>
+				<span class="n">invokeBeanFactoryPostProcessors</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+
+				<span class="c1">// Register bean processors that intercept bean creation.</span>
+				<span class="n">registerBeanPostProcessors</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+
+				<span class="c1">// Initialize message source for this context.</span>
+				<span class="n">initMessageSource</span><span class="o">();</span>
+
+				<span class="c1">// Initialize event multicaster for this context.</span>
+				<span class="n">initApplicationEventMulticaster</span><span class="o">();</span>
+
+				<span class="c1">// Initialize other special beans in specific context subclasses.</span>
+				<span class="n">onRefresh</span><span class="o">();</span>
+
+				<span class="c1">// Check for listener beans and register them.</span>
+				<span class="n">registerListeners</span><span class="o">();</span>
+
+				<span class="c1">// Instantiate all remaining (non-lazy-init) singletons.</span>
+				<span class="n">finishBeanFactoryInitialization</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+
+				<span class="c1">// Last step: publish corresponding event.</span>
+				<span class="n">finishRefresh</span><span class="o">();</span>
+			<span class="o">}</span>
+
+			<span class="k">catch</span> <span class="o">(</span><span class="n">BeansException</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+            	<span class="c1">// exception handle</span>
+			<span class="o">}</span>
+
+			<span class="k">finally</span> <span class="o">{</span>
+				<span class="c1">// Reset common introspection caches in Spring's core, since we</span>
+				<span class="c1">// might not ever need metadata for singleton beans anymore...</span>
+				<span class="n">resetCommonCaches</span><span class="o">();</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+
+<p>上面的过程主要分为以下几个部分</p>
+<ol>
+  <li>初始化bean factory, 查找bean的所有定义</li>
+  <li>配置bean factory</li>
+  <li>初始化事件广播器</li>
+  <li>子类初始化方法</li>
+  <li>注册事件监听器</li>
+  <li>根据查找到的所有定义的bean，进行初始化</li>
+</ol>
+
+<h1 id="初始化bean-factory-查找bean的所有定义">初始化bean factory, 查找bean的所有定义</h1>
+
+<p>bean的定义由obtainFreshBeanFactory()函数完成，这个函数会初始化一个bean factory，所有定义好的bean会存储在bean factory的一个map中。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">obtainFreshBeanFactory</span> <span class="o">-&gt;</span> <span class="n">refreshBeanFactory</span>
+</code></pre></div></div>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="nd">@Override</span>
+	<span class="kd">protected</span> <span class="kd">final</span> <span class="kt">void</span> <span class="nf">refreshBeanFactory</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">BeansException</span> <span class="o">{</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">hasBeanFactory</span><span class="o">())</span> <span class="o">{</span>
+			<span class="n">destroyBeans</span><span class="o">();</span>
+			<span class="n">closeBeanFactory</span><span class="o">();</span>
+		<span class="o">}</span>
+		<span class="k">try</span> <span class="o">{</span>
+			<span class="n">DefaultListableBeanFactory</span> <span class="n">beanFactory</span> <span class="o">=</span> <span class="n">createBeanFactory</span><span class="o">();</span>
+			<span class="n">beanFactory</span><span class="o">.</span><span class="na">setSerializationId</span><span class="o">(</span><span class="n">getId</span><span class="o">());</span>
+			<span class="n">customizeBeanFactory</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+			<span class="n">loadBeanDefinitions</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+			<span class="kd">synchronized</span> <span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">beanFactoryMonitor</span><span class="o">)</span> <span class="o">{</span>
+				<span class="k">this</span><span class="o">.</span><span class="na">beanFactory</span> <span class="o">=</span> <span class="n">beanFactory</span><span class="o">;</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+		<span class="k">catch</span> <span class="o">(</span><span class="n">IOException</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+			<span class="k">throw</span> <span class="k">new</span> <span class="nf">ApplicationContextException</span><span class="o">(</span><span class="s">"I/O error parsing bean definition source for "</span> <span class="o">+</span> <span class="n">getDisplayName</span><span class="o">(),</span> <span class="n">ex</span><span class="o">);</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+<p>refresh函数中完成bean factory的定义以及初始化，同时查找所有bean的定义。需要注意的是customizeBeanFactory会对bean factory进行一些配置，主要包括下面的两个属性</p>
+<ol>
+  <li>是否允许bean覆盖 -&gt;  allowBeanDefinitionOverriding</li>
+  <li>是否允许循环引用 -&gt; allowCircularReferences</li>
+</ol>
+
+<p>这里需要大致介绍下这两个属性，allowBeanDefinitionOverriding表示是否允许定义重名的bean，如果不允许则会抛出异常，否则会进行覆盖。allowCircularReferences表示是否允许循环依赖，所谓的循环依赖是指两个bean互相依赖，bean A是bean B的一个属性同时bean B也是bean A的一个属性，这样初始化bean A就需要先完成bean B的初始化，初始化bean B又需要bean A的初始化，这就产生了循环依赖的情况，下面会提到spring是如何完成循环依赖的注入的。需要注意的是allowBeanDefinitionOverriding用于bean定义阶段，而allowCircularReferences用于初始化阶段。</p>
+
+<p>在配置完bean factory后就进入到正是的查找bean定义阶段了，完成这项工作的是loadBeanDefinitions。</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="nd">@Override</span>
+	<span class="kd">protected</span> <span class="kt">void</span> <span class="nf">loadBeanDefinitions</span><span class="o">(</span><span class="n">DefaultListableBeanFactory</span> <span class="n">beanFactory</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">BeansException</span><span class="o">,</span> <span class="n">IOException</span> <span class="o">{</span>
+		<span class="c1">// Create a new XmlBeanDefinitionReader for the given BeanFactory.</span>
+		<span class="n">XmlBeanDefinitionReader</span> <span class="n">beanDefinitionReader</span> <span class="o">=</span> <span class="k">new</span> <span class="n">XmlBeanDefinitionReader</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+
+		<span class="c1">// Configure the bean definition reader with this context's</span>
+		<span class="c1">// resource loading environment.</span>
+		<span class="n">beanDefinitionReader</span><span class="o">.</span><span class="na">setEnvironment</span><span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">getEnvironment</span><span class="o">());</span>
+		<span class="n">beanDefinitionReader</span><span class="o">.</span><span class="na">setResourceLoader</span><span class="o">(</span><span class="k">this</span><span class="o">);</span>
+		<span class="n">beanDefinitionReader</span><span class="o">.</span><span class="na">setEntityResolver</span><span class="o">(</span><span class="k">new</span> <span class="n">ResourceEntityResolver</span><span class="o">(</span><span class="k">this</span><span class="o">));</span>
+
+		<span class="c1">// Allow a subclass to provide custom initialization of the reader,</span>
+		<span class="c1">// then proceed with actually loading the bean definitions.</span>
+		<span class="n">initBeanDefinitionReader</span><span class="o">(</span><span class="n">beanDefinitionReader</span><span class="o">);</span>
+		<span class="n">loadBeanDefinitions</span><span class="o">(</span><span class="n">beanDefinitionReader</span><span class="o">);</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+<p>由于我们需要加载的bean一部分定义在xml中，所以我们需要读取xml文件，在spring中这个功能由XmlBeanDefinitionReader完成。定义好xml的reader后，继续调用重载函数loadBeanDefinitions进行加载，不同的是此时参数已经变成了刚才定义的reader。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="kd">protected</span> <span class="kt">void</span> <span class="nf">loadBeanDefinitions</span><span class="o">(</span><span class="n">XmlBeanDefinitionReader</span> <span class="n">reader</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">BeansException</span><span class="o">,</span> <span class="n">IOException</span> <span class="o">{</span>
+		<span class="n">Resource</span><span class="o">[]</span> <span class="n">configResources</span> <span class="o">=</span> <span class="n">getConfigResources</span><span class="o">();</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">configResources</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">reader</span><span class="o">.</span><span class="na">loadBeanDefinitions</span><span class="o">(</span><span class="n">configResources</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="n">String</span><span class="o">[]</span> <span class="n">configLocations</span> <span class="o">=</span> <span class="n">getConfigLocations</span><span class="o">();</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">configLocations</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">reader</span><span class="o">.</span><span class="na">loadBeanDefinitions</span><span class="o">(</span><span class="n">configLocations</span><span class="o">);</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+<p>loadBeanDefinitions会针对每一个xml资源调用一次reader的loadBeanDefinitions函数进行加载，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="nd">@Override</span>
+	<span class="kd">public</span> <span class="kt">int</span> <span class="nf">loadBeanDefinitions</span><span class="o">(</span><span class="n">String</span><span class="o">...</span> <span class="n">locations</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">BeanDefinitionStoreException</span> <span class="o">{</span>
+		<span class="n">Assert</span><span class="o">.</span><span class="na">notNull</span><span class="o">(</span><span class="n">locations</span><span class="o">,</span> <span class="s">"Location array must not be null"</span><span class="o">);</span>
+		<span class="kt">int</span> <span class="n">counter</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span>
+		<span class="k">for</span> <span class="o">(</span><span class="n">String</span> <span class="n">location</span> <span class="o">:</span> <span class="n">locations</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">counter</span> <span class="o">+=</span> <span class="n">loadBeanDefinitions</span><span class="o">(</span><span class="n">location</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">return</span> <span class="n">counter</span><span class="o">;</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+
+<p>经过资源查找一系列操作后最终会进入到下面的方法中，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="kd">public</span> <span class="kt">int</span> <span class="nf">loadBeanDefinitions</span><span class="o">(</span><span class="n">EncodedResource</span> <span class="n">encodedResource</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">BeanDefinitionStoreException</span> <span class="o">{</span>
+		<span class="n">Set</span><span class="o">&lt;</span><span class="n">EncodedResource</span><span class="o">&gt;</span> <span class="n">currentResources</span> <span class="o">=</span> <span class="k">this</span><span class="o">.</span><span class="na">resourcesCurrentlyBeingLoaded</span><span class="o">.</span><span class="na">get</span><span class="o">();</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">currentResources</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">currentResources</span> <span class="o">=</span> <span class="k">new</span> <span class="n">HashSet</span><span class="o">&lt;</span><span class="n">EncodedResource</span><span class="o">&gt;(</span><span class="mi">4</span><span class="o">);</span>
+			<span class="k">this</span><span class="o">.</span><span class="na">resourcesCurrentlyBeingLoaded</span><span class="o">.</span><span class="na">set</span><span class="o">(</span><span class="n">currentResources</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">if</span> <span class="o">(!</span><span class="n">currentResources</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">encodedResource</span><span class="o">))</span> <span class="o">{</span>
+			<span class="k">throw</span> <span class="k">new</span> <span class="nf">BeanDefinitionStoreException</span><span class="o">(</span>
+					<span class="s">"Detected cyclic loading of "</span> <span class="o">+</span> <span class="n">encodedResource</span> <span class="o">+</span> <span class="s">" - check your import definitions!"</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">try</span> <span class="o">{</span>
+			<span class="n">InputStream</span> <span class="n">inputStream</span> <span class="o">=</span> <span class="n">encodedResource</span><span class="o">.</span><span class="na">getResource</span><span class="o">().</span><span class="na">getInputStream</span><span class="o">();</span>
+			<span class="k">try</span> <span class="o">{</span>
+				<span class="n">InputSource</span> <span class="n">inputSource</span> <span class="o">=</span> <span class="k">new</span> <span class="n">InputSource</span><span class="o">(</span><span class="n">inputStream</span><span class="o">);</span>
+				<span class="k">if</span> <span class="o">(</span><span class="n">encodedResource</span><span class="o">.</span><span class="na">getEncoding</span><span class="o">()</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+					<span class="n">inputSource</span><span class="o">.</span><span class="na">setEncoding</span><span class="o">(</span><span class="n">encodedResource</span><span class="o">.</span><span class="na">getEncoding</span><span class="o">());</span>
+				<span class="o">}</span>
+				<span class="k">return</span> <span class="nf">doLoadBeanDefinitions</span><span class="o">(</span><span class="n">inputSource</span><span class="o">,</span> <span class="n">encodedResource</span><span class="o">.</span><span class="na">getResource</span><span class="o">());</span>
+			<span class="o">}</span>
+			<span class="k">finally</span> <span class="o">{</span>
+				<span class="n">inputStream</span><span class="o">.</span><span class="na">close</span><span class="o">();</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+		<span class="k">catch</span> <span class="o">(</span><span class="n">IOException</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+			<span class="k">throw</span> <span class="k">new</span> <span class="nf">BeanDefinitionStoreException</span><span class="o">(</span>
+					<span class="s">"IOException parsing XML document from "</span> <span class="o">+</span> <span class="n">encodedResource</span><span class="o">.</span><span class="na">getResource</span><span class="o">(),</span> <span class="n">ex</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">finally</span> <span class="o">{</span>
+			<span class="n">currentResources</span><span class="o">.</span><span class="na">remove</span><span class="o">(</span><span class="n">encodedResource</span><span class="o">);</span>
+			<span class="k">if</span> <span class="o">(</span><span class="n">currentResources</span><span class="o">.</span><span class="na">isEmpty</span><span class="o">())</span> <span class="o">{</span>
+				<span class="k">this</span><span class="o">.</span><span class="na">resourcesCurrentlyBeingLoaded</span><span class="o">.</span><span class="na">remove</span><span class="o">();</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+
+<p>上面的代码比较长大致可以分为三个阶段</p>
+<ol>
+  <li>记录当前正在处理的resource，如果当前resource已经在处理中则会抛出异常</li>
+  <li>获取文件的流</li>
+  <li>读取流并且进行bean加载</li>
+  <li>加载成功后从正在处理的resource集合中移除当前resource</li>
+</ol>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="kd">protected</span> <span class="kt">int</span> <span class="nf">doLoadBeanDefinitions</span><span class="o">(</span><span class="n">InputSource</span> <span class="n">inputSource</span><span class="o">,</span> <span class="n">Resource</span> <span class="n">resource</span><span class="o">)</span>
+			<span class="kd">throws</span> <span class="n">BeanDefinitionStoreException</span> <span class="o">{</span>
+		<span class="k">try</span> <span class="o">{</span>
+			<span class="n">Document</span> <span class="n">doc</span> <span class="o">=</span> <span class="n">doLoadDocument</span><span class="o">(</span><span class="n">inputSource</span><span class="o">,</span> <span class="n">resource</span><span class="o">);</span>
+			<span class="k">return</span> <span class="nf">registerBeanDefinitions</span><span class="o">(</span><span class="n">doc</span><span class="o">,</span> <span class="n">resource</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">catch</span> <span class="o">(</span><span class="n">Exception</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+			<span class="c1">// handle exception</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+
+<p>继续沿着上面的代码往下跟踪会进入到parseBeanDefinitions(Element root, …)中，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="kd">protected</span> <span class="kt">void</span> <span class="nf">parseBeanDefinitions</span><span class="o">(</span><span class="n">Element</span> <span class="n">root</span><span class="o">,</span> <span class="n">BeanDefinitionParserDelegate</span> <span class="n">delegate</span><span class="o">)</span> <span class="o">{</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">delegate</span><span class="o">.</span><span class="na">isDefaultNamespace</span><span class="o">(</span><span class="n">root</span><span class="o">))</span> <span class="o">{</span>
+			<span class="n">NodeList</span> <span class="n">nl</span> <span class="o">=</span> <span class="n">root</span><span class="o">.</span><span class="na">getChildNodes</span><span class="o">();</span>
+			<span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">nl</span><span class="o">.</span><span class="na">getLength</span><span class="o">();</span> <span class="n">i</span><span class="o">++)</span> <span class="o">{</span>
+				<span class="n">Node</span> <span class="n">node</span> <span class="o">=</span> <span class="n">nl</span><span class="o">.</span><span class="na">item</span><span class="o">(</span><span class="n">i</span><span class="o">);</span>
+				<span class="k">if</span> <span class="o">(</span><span class="n">node</span> <span class="k">instanceof</span> <span class="n">Element</span><span class="o">)</span> <span class="o">{</span>
+					<span class="n">Element</span> <span class="n">ele</span> <span class="o">=</span> <span class="o">(</span><span class="n">Element</span><span class="o">)</span> <span class="n">node</span><span class="o">;</span>
+					<span class="k">if</span> <span class="o">(</span><span class="n">delegate</span><span class="o">.</span><span class="na">isDefaultNamespace</span><span class="o">(</span><span class="n">ele</span><span class="o">))</span> <span class="o">{</span>
+						<span class="n">parseDefaultElement</span><span class="o">(</span><span class="n">ele</span><span class="o">,</span> <span class="n">delegate</span><span class="o">);</span>
+					<span class="o">}</span>
+					<span class="k">else</span> <span class="o">{</span>
+						<span class="n">delegate</span><span class="o">.</span><span class="na">parseCustomElement</span><span class="o">(</span><span class="n">ele</span><span class="o">);</span>
+					<span class="o">}</span>
+				<span class="o">}</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+		<span class="k">else</span> <span class="o">{</span>
+			<span class="n">delegate</span><span class="o">.</span><span class="na">parseCustomElement</span><span class="o">(</span><span class="n">root</span><span class="o">);</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+<p>上面的代码扫描root节点的每个子节点，然后判断子节点是否是Element，如果不是则继续下一个子节点，如果是则判断是否是默认的namespace，如果是则调用parseDefaultElement处理，否则调用delegate的parseCustomElement进行处理。这里需要说明一下默认的namespace是指 <strong>http://www.springframework.org/schema/beans</strong> ，如果我们在xml中设置了下面的配置</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;context:annotation-config /&gt;
+</code></pre></div></div>
+<p>那么这个配置对应的namespace则是 <strong>http://www.springframework.org/schema/context</strong> ，与默认的就不相同了。</p>
+
+<h2 id="默认的namespace">默认的namespace</h2>
+<p>首先我们先看一下默认的namespace会进行什么处理，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+	<span class="kd">private</span> <span class="kt">void</span> <span class="nf">parseDefaultElement</span><span class="o">(</span><span class="n">Element</span> <span class="n">ele</span><span class="o">,</span> <span class="n">BeanDefinitionParserDelegate</span> <span class="n">delegate</span><span class="o">)</span> <span class="o">{</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">delegate</span><span class="o">.</span><span class="na">nodeNameEquals</span><span class="o">(</span><span class="n">ele</span><span class="o">,</span> <span class="n">IMPORT_ELEMENT</span><span class="o">))</span> <span class="o">{</span>
+			<span class="n">importBeanDefinitionResource</span><span class="o">(</span><span class="n">ele</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">else</span> <span class="nf">if</span> <span class="o">(</span><span class="n">delegate</span><span class="o">.</span><span class="na">nodeNameEquals</span><span class="o">(</span><span class="n">ele</span><span class="o">,</span> <span class="n">ALIAS_ELEMENT</span><span class="o">))</span> <span class="o">{</span>
+			<span class="n">processAliasRegistration</span><span class="o">(</span><span class="n">ele</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">else</span> <span class="nf">if</span> <span class="o">(</span><span class="n">delegate</span><span class="o">.</span><span class="na">nodeNameEquals</span><span class="o">(</span><span class="n">ele</span><span class="o">,</span> <span class="n">BEAN_ELEMENT</span><span class="o">))</span> <span class="o">{</span>
+			<span class="n">processBeanDefinition</span><span class="o">(</span><span class="n">ele</span><span class="o">,</span> <span class="n">delegate</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">else</span> <span class="nf">if</span> <span class="o">(</span><span class="n">delegate</span><span class="o">.</span><span class="na">nodeNameEquals</span><span class="o">(</span><span class="n">ele</span><span class="o">,</span> <span class="n">NESTED_BEANS_ELEMENT</span><span class="o">))</span> <span class="o">{</span>
+			<span class="c1">// recurse</span>
+			<span class="n">doRegisterBeanDefinitions</span><span class="o">(</span><span class="n">ele</span><span class="o">);</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+<p>从代码我们可以推断出有四个element属于默认的namespace，分别是</p>
+<ol>
+  <li>import -&gt; 引入其他配置文件</li>
+  <li>alias -&gt; 给某个bean起一个别名</li>
+  <li>bean -&gt; bean定义</li>
+  <li>beans -&gt; 内嵌的beans</li>
+</ol>
+
+<p>如果是import类型的，则会解析import中定义的配置路径，然后根据解析出的路径进行bean definition。如果是alias，则记录alias到原始名称的映射关系，这个映射关系存储在map表中。如果是bean类型的则调用processBeanDefinition处理。如果是beans的，则调用doRegisterBeanDefinitions进行递归处理。</p>
+
+<p>在这里我们重点关注下element为bean类型的，因为上面的其他三种类型最终都会转化为bean类型。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="cm">/**
+	 * Process the given bean element, parsing the bean definition
+	 * and registering it with the registry.
+	 */</span>
+	<span class="kd">protected</span> <span class="kt">void</span> <span class="nf">processBeanDefinition</span><span class="o">(</span><span class="n">Element</span> <span class="n">ele</span><span class="o">,</span> <span class="n">BeanDefinitionParserDelegate</span> <span class="n">delegate</span><span class="o">)</span> <span class="o">{</span>
+		<span class="n">BeanDefinitionHolder</span> <span class="n">bdHolder</span> <span class="o">=</span> <span class="n">delegate</span><span class="o">.</span><span class="na">parseBeanDefinitionElement</span><span class="o">(</span><span class="n">ele</span><span class="o">);</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">bdHolder</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">bdHolder</span> <span class="o">=</span> <span class="n">delegate</span><span class="o">.</span><span class="na">decorateBeanDefinitionIfRequired</span><span class="o">(</span><span class="n">ele</span><span class="o">,</span> <span class="n">bdHolder</span><span class="o">);</span>
+			<span class="k">try</span> <span class="o">{</span>
+				<span class="c1">// Register the final decorated instance.</span>
+				<span class="n">BeanDefinitionReaderUtils</span><span class="o">.</span><span class="na">registerBeanDefinition</span><span class="o">(</span><span class="n">bdHolder</span><span class="o">,</span> <span class="n">getReaderContext</span><span class="o">().</span><span class="na">getRegistry</span><span class="o">());</span>
+			<span class="o">}</span>
+			<span class="k">catch</span> <span class="o">(</span><span class="n">BeanDefinitionStoreException</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+				<span class="n">getReaderContext</span><span class="o">().</span><span class="na">error</span><span class="o">(</span><span class="s">"Failed to register bean definition with name '"</span> <span class="o">+</span>
+						<span class="n">bdHolder</span><span class="o">.</span><span class="na">getBeanName</span><span class="o">()</span> <span class="o">+</span> <span class="s">"'"</span><span class="o">,</span> <span class="n">ele</span><span class="o">,</span> <span class="n">ex</span><span class="o">);</span>
+			<span class="o">}</span>
+			<span class="c1">// Send registration event.</span>
+			<span class="n">getReaderContext</span><span class="o">().</span><span class="na">fireComponentRegistered</span><span class="o">(</span><span class="k">new</span> <span class="n">BeanComponentDefinition</span><span class="o">(</span><span class="n">bdHolder</span><span class="o">));</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+
+<p>上面的代码不是很复杂，主要是解析element里面的各个元素包括name, class, init-method, alias等等，然后将其封装到BeanDefinitionHolder中，然后将其注册到bean factory中。如果bean设置了alias则需要将alias到原始名称的映射记录下来，这个操作和上面的alias类型一致。bean的注册调用的是registerBeanDefinition方法，这里面会用到我们之前提过的allowBeanDefinitionOverriding属性判断当前bean是否应该被注册，具体代码可以参照下面</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>		<span class="n">BeanDefinition</span> <span class="n">oldBeanDefinition</span><span class="o">;</span>
+
+		<span class="n">oldBeanDefinition</span> <span class="o">=</span> <span class="k">this</span><span class="o">.</span><span class="na">beanDefinitionMap</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">beanName</span><span class="o">);</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">oldBeanDefinition</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="k">if</span> <span class="o">(!</span><span class="n">isAllowBeanDefinitionOverriding</span><span class="o">())</span> <span class="o">{</span>
+				<span class="k">throw</span> <span class="k">new</span> <span class="nf">BeanDefinitionStoreException</span><span class="o">(</span><span class="n">beanDefinition</span><span class="o">.</span><span class="na">getResourceDescription</span><span class="o">(),</span> <span class="n">beanName</span><span class="o">,</span>
+						<span class="s">"Cannot register bean definition ["</span> <span class="o">+</span> <span class="n">beanDefinition</span> <span class="o">+</span> <span class="s">"] for bean '"</span> <span class="o">+</span> <span class="n">beanName</span> <span class="o">+</span>
+						<span class="s">"': There is already ["</span> <span class="o">+</span> <span class="n">oldBeanDefinition</span> <span class="o">+</span> <span class="s">"] bound."</span><span class="o">);</span>
+			<span class="o">}</span>
+			<span class="k">else</span> <span class="nf">if</span> <span class="o">(</span><span class="n">oldBeanDefinition</span><span class="o">.</span><span class="na">getRole</span><span class="o">()</span> <span class="o">&lt;</span> <span class="n">beanDefinition</span><span class="o">.</span><span class="na">getRole</span><span class="o">())</span> <span class="o">{</span>
+				<span class="c1">// e.g. was ROLE_APPLICATION, now overriding with ROLE_SUPPORT or ROLE_INFRASTRUCTURE</span>
+				<span class="k">if</span> <span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">logger</span><span class="o">.</span><span class="na">isWarnEnabled</span><span class="o">())</span> <span class="o">{</span>
+					<span class="k">this</span><span class="o">.</span><span class="na">logger</span><span class="o">.</span><span class="na">warn</span><span class="o">(</span><span class="s">"Overriding user-defined bean definition for bean '"</span> <span class="o">+</span> <span class="n">beanName</span> <span class="o">+</span>
+							<span class="s">"' with a framework-generated bean definition: replacing ["</span> <span class="o">+</span>
+							<span class="n">oldBeanDefinition</span> <span class="o">+</span> <span class="s">"] with ["</span> <span class="o">+</span> <span class="n">beanDefinition</span> <span class="o">+</span> <span class="s">"]"</span><span class="o">);</span>
+				<span class="o">}</span>
+			<span class="o">}</span>
+			<span class="k">else</span> <span class="nf">if</span> <span class="o">(!</span><span class="n">beanDefinition</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="n">oldBeanDefinition</span><span class="o">))</span> <span class="o">{</span>
+				<span class="k">if</span> <span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">logger</span><span class="o">.</span><span class="na">isInfoEnabled</span><span class="o">())</span> <span class="o">{</span>
+					<span class="k">this</span><span class="o">.</span><span class="na">logger</span><span class="o">.</span><span class="na">info</span><span class="o">(</span><span class="s">"Overriding bean definition for bean '"</span> <span class="o">+</span> <span class="n">beanName</span> <span class="o">+</span>
+							<span class="s">"' with a different definition: replacing ["</span> <span class="o">+</span> <span class="n">oldBeanDefinition</span> <span class="o">+</span>
+							<span class="s">"] with ["</span> <span class="o">+</span> <span class="n">beanDefinition</span> <span class="o">+</span> <span class="s">"]"</span><span class="o">);</span>
+				<span class="o">}</span>
+			<span class="o">}</span>
+			<span class="k">else</span> <span class="o">{</span>
+				<span class="k">if</span> <span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">logger</span><span class="o">.</span><span class="na">isDebugEnabled</span><span class="o">())</span> <span class="o">{</span>
+					<span class="k">this</span><span class="o">.</span><span class="na">logger</span><span class="o">.</span><span class="na">debug</span><span class="o">(</span><span class="s">"Overriding bean definition for bean '"</span> <span class="o">+</span> <span class="n">beanName</span> <span class="o">+</span>
+							<span class="s">"' with an equivalent definition: replacing ["</span> <span class="o">+</span> <span class="n">oldBeanDefinition</span> <span class="o">+</span>
+							<span class="s">"] with ["</span> <span class="o">+</span> <span class="n">beanDefinition</span> <span class="o">+</span> <span class="s">"]"</span><span class="o">);</span>
+				<span class="o">}</span>
+			<span class="o">}</span>
+			<span class="k">this</span><span class="o">.</span><span class="na">beanDefinitionMap</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="n">beanDefinition</span><span class="o">);</span>
+		<span class="o">}</span>
+</code></pre></div></div>
+<p>方法首先会从beanDefinitionMap中获取beanDefinition，如果没有则进行注册，如果有了则判断是否允许覆盖，这里就是通过allowBeanDefinitionOverriding参数完成的。如果不允许覆盖，则会直接抛出异常。</p>
+
+<h2 id="自定义namespace">自定义namespace</h2>
+<p>上面描述了默认namespace的处理过程，下面会对自定义namespace的解析过程做一个大致的描述。为了更好的说明，我们以</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;context:annotation-config</span> <span class="nt">/&gt;</span>
+</code></pre></div></div>
+<p>为例。</p>
+
+<p>首先会调用BeanDefinitionParserDelegate的parseCustomElement进行处理，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="kd">public</span> <span class="n">BeanDefinition</span> <span class="nf">parseCustomElement</span><span class="o">(</span><span class="n">Element</span> <span class="n">ele</span><span class="o">)</span> <span class="o">{</span>
+		<span class="k">return</span> <span class="nf">parseCustomElement</span><span class="o">(</span><span class="n">ele</span><span class="o">,</span> <span class="kc">null</span><span class="o">);</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+<p>接下来处理会交给parseCustomElement方法，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="kd">public</span> <span class="n">BeanDefinition</span> <span class="nf">parseCustomElement</span><span class="o">(</span><span class="n">Element</span> <span class="n">ele</span><span class="o">,</span> <span class="n">BeanDefinition</span> <span class="n">containingBd</span><span class="o">)</span> <span class="o">{</span>
+		<span class="n">String</span> <span class="n">namespaceUri</span> <span class="o">=</span> <span class="n">getNamespaceURI</span><span class="o">(</span><span class="n">ele</span><span class="o">);</span>
+		<span class="n">NamespaceHandler</span> <span class="n">handler</span> <span class="o">=</span> <span class="k">this</span><span class="o">.</span><span class="na">readerContext</span><span class="o">.</span><span class="na">getNamespaceHandlerResolver</span><span class="o">().</span><span class="na">resolve</span><span class="o">(</span><span class="n">namespaceUri</span><span class="o">);</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">handler</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">error</span><span class="o">(</span><span class="s">"Unable to locate Spring NamespaceHandler for XML schema namespace ["</span> <span class="o">+</span> <span class="n">namespaceUri</span> <span class="o">+</span> <span class="s">"]"</span><span class="o">,</span> <span class="n">ele</span><span class="o">);</span>
+			<span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+		<span class="o">}</span>
+		<span class="k">return</span> <span class="n">handler</span><span class="o">.</span><span class="na">parse</span><span class="o">(</span><span class="n">ele</span><span class="o">,</span> <span class="k">new</span> <span class="n">ParserContext</span><span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">readerContext</span><span class="o">,</span> <span class="k">this</span><span class="o">,</span> <span class="n">containingBd</span><span class="o">));</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+<p>上面的代码首先获取element对应的namespace，然后获取对应的handler。所有handler的定义来自META-INF/spring.handlers文件，spring解析类路径下的所有spring.handlers文件，然后将其合并问一个map，map的key为namespace，value是对应的handler的类名称。解析完所有的spring.handlers文件后，spring遍历map，通过类加载器加载所有handler类，并且进行初始化，放到handlerMappings（一个map）中，对应的key是namespace，value是handler实例。
+因为我们以context标签为例，所以这里获取的handler就是ContextNamespaceHandler。获取到handler后，进入到parse阶段，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="nd">@Override</span>
+	<span class="kd">public</span> <span class="n">BeanDefinition</span> <span class="nf">parse</span><span class="o">(</span><span class="n">Element</span> <span class="n">element</span><span class="o">,</span> <span class="n">ParserContext</span> <span class="n">parserContext</span><span class="o">)</span> <span class="o">{</span>
+		<span class="k">return</span> <span class="nf">findParserForElement</span><span class="o">(</span><span class="n">element</span><span class="o">,</span> <span class="n">parserContext</span><span class="o">).</span><span class="na">parse</span><span class="o">(</span><span class="n">element</span><span class="o">,</span> <span class="n">parserContext</span><span class="o">);</span>
+	<span class="o">}</span>
+    
+    <span class="cm">/**
+	 * Locates the {@link BeanDefinitionParser} from the register implementations using
+	 * the local name of the supplied {@link Element}.
+	 */</span>
+	<span class="kd">private</span> <span class="n">BeanDefinitionParser</span> <span class="nf">findParserForElement</span><span class="o">(</span><span class="n">Element</span> <span class="n">element</span><span class="o">,</span> <span class="n">ParserContext</span> <span class="n">parserContext</span><span class="o">)</span> <span class="o">{</span>
+		<span class="n">String</span> <span class="n">localName</span> <span class="o">=</span> <span class="n">parserContext</span><span class="o">.</span><span class="na">getDelegate</span><span class="o">().</span><span class="na">getLocalName</span><span class="o">(</span><span class="n">element</span><span class="o">);</span>
+		<span class="n">BeanDefinitionParser</span> <span class="n">parser</span> <span class="o">=</span> <span class="k">this</span><span class="o">.</span><span class="na">parsers</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">localName</span><span class="o">);</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">parser</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">parserContext</span><span class="o">.</span><span class="na">getReaderContext</span><span class="o">().</span><span class="na">fatal</span><span class="o">(</span>
+					<span class="s">"Cannot locate BeanDefinitionParser for element ["</span> <span class="o">+</span> <span class="n">localName</span> <span class="o">+</span> <span class="s">"]"</span><span class="o">,</span> <span class="n">element</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">return</span> <span class="n">parser</span><span class="o">;</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+<p>从parse函数可以看出，ContextNamespaceHandler不是最终的处理类，它还会根据local name也就是上面标签中的annotation-config查找对应的parser，具体到这个例子对应的parser是AnnocationConfigBeanDefinitionParser，这个parser是在ContextNamespaceHandler初始化的时候注册到handler中的</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">public</span> <span class="kd">class</span> <span class="nc">ContextNamespaceHandler</span> <span class="kd">extends</span> <span class="n">NamespaceHandlerSupport</span> <span class="o">{</span>
+
+	<span class="nd">@Override</span>
+	<span class="kd">public</span> <span class="kt">void</span> <span class="nf">init</span><span class="o">()</span> <span class="o">{</span>
+		<span class="n">registerBeanDefinitionParser</span><span class="o">(</span><span class="s">"property-placeholder"</span><span class="o">,</span> <span class="k">new</span> <span class="n">PropertyPlaceholderBeanDefinitionParser</span><span class="o">());</span>
+		<span class="n">registerBeanDefinitionParser</span><span class="o">(</span><span class="s">"property-override"</span><span class="o">,</span> <span class="k">new</span> <span class="n">PropertyOverrideBeanDefinitionParser</span><span class="o">());</span>
+        <span class="c1">// 这里就是上面提到的parser</span>
+		<span class="n">registerBeanDefinitionParser</span><span class="o">(</span><span class="s">"annotation-config"</span><span class="o">,</span> <span class="k">new</span> <span class="n">AnnotationConfigBeanDefinitionParser</span><span class="o">());</span>
+		<span class="n">registerBeanDefinitionParser</span><span class="o">(</span><span class="s">"component-scan"</span><span class="o">,</span> <span class="k">new</span> <span class="n">ComponentScanBeanDefinitionParser</span><span class="o">());</span>
+		<span class="n">registerBeanDefinitionParser</span><span class="o">(</span><span class="s">"load-time-weaver"</span><span class="o">,</span> <span class="k">new</span> <span class="n">LoadTimeWeaverBeanDefinitionParser</span><span class="o">());</span>
+		<span class="n">registerBeanDefinitionParser</span><span class="o">(</span><span class="s">"spring-configured"</span><span class="o">,</span> <span class="k">new</span> <span class="n">SpringConfiguredBeanDefinitionParser</span><span class="o">());</span>
+		<span class="n">registerBeanDefinitionParser</span><span class="o">(</span><span class="s">"mbean-export"</span><span class="o">,</span> <span class="k">new</span> <span class="n">MBeanExportBeanDefinitionParser</span><span class="o">());</span>
+		<span class="n">registerBeanDefinitionParser</span><span class="o">(</span><span class="s">"mbean-server"</span><span class="o">,</span> <span class="k">new</span> <span class="n">MBeanServerBeanDefinitionParser</span><span class="o">());</span>
+	<span class="o">}</span>
+
+<span class="o">}</span>
+</code></pre></div></div>
+<p>AnnotationConfigBeanDefinitionParser将Annotation相关的一些Processor注册到bean factory中，包括</p>
+<ol>
+  <li>ConfigurationClassPostProcessor</li>
+  <li>AutowiredAnnotationBeanPostProcessor</li>
+  <li>RequiredAnnotationBeanPostProcessor</li>
+  <li>CommonAnnotationBeanPostProcessor
+等，这些都是用来处理在spring中出现的注解的。</li>
+</ol>
+
+<p><strong><font color="red" size="5">到这为止，bean的定义阶段就完成了，下面进入bean factory的配置阶段</font></strong></p>
+
+<h1 id="配置bean-factory">配置bean factory</h1>
+
+<p>bean factory的配置阶段分为多步，</p>
+<ol>
+  <li>准备阶段</li>
+  <li>后处理阶段，目前什么都没做</li>
+  <li>调用ApplicationContext中设置的BeanFactoryPostProcessor和bean factory加载的所有BeanFactoryPostProcessor处理bean factory</li>
+  <li>查找bean factory加载的所有BeanPostProcessor，然后设置到bean factory的beanPostProcessors中
+    <div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>         <span class="c1">// Prepare the bean factory for use in this context.</span>
+         <span class="n">prepareBeanFactory</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+
+         <span class="k">try</span> <span class="o">{</span>
+             <span class="c1">// Allows post-processing of the bean factory in context subclasses.</span>
+             <span class="n">postProcessBeanFactory</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+
+             <span class="c1">// Invoke factory processors registered as beans in the context.</span>
+             <span class="n">invokeBeanFactoryPostProcessors</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+
+             <span class="c1">// Register bean processors that intercept bean creation.</span>
+             <span class="n">registerBeanPostProcessors</span><span class="o">(</span><span class="n">beanFactory</span><span class="o">);</span>
+                
+             <span class="o">...</span>
+                
+         <span class="o">}</span> <span class="k">catch</span><span class="o">()</span> <span class="o">...</span>
+</code></pre></div>    </div>
+    <p>第四步提到的所有beanPostProcessors在bean初始化之后会依次进行调用。</p>
+  </li>
+</ol>
+
+<h1 id="初始化事件广播器">初始化事件广播器</h1>
+<p>事件广播器用于广播消息，所有的消息会被后面注册的监听器所处理</p>
+
+<h1 id="子类初始化方法">子类初始化方法</h1>
+<p>该步骤需要AbstractApplicationContext的子类覆写onRefresh方法</p>
+
+<h1 id="注册事件监听器">注册事件监听器</h1>
+<p>该步骤注册的所有监听器会接收到消息广播器推送的消息，并且进行处理</p>
+
+<h1 id="根据查找到的所有定义的bean进行初始化">根据查找到的所有定义的bean，进行初始化</h1>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="kd">protected</span> <span class="kt">void</span> <span class="nf">finishBeanFactoryInitialization</span><span class="o">(</span><span class="n">ConfigurableListableBeanFactory</span> <span class="n">beanFactory</span><span class="o">)</span> <span class="o">{</span>
+		<span class="c1">// Initialize conversion service for this context.</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">beanFactory</span><span class="o">.</span><span class="na">containsBean</span><span class="o">(</span><span class="n">CONVERSION_SERVICE_BEAN_NAME</span><span class="o">)</span> <span class="o">&amp;&amp;</span>
+				<span class="n">beanFactory</span><span class="o">.</span><span class="na">isTypeMatch</span><span class="o">(</span><span class="n">CONVERSION_SERVICE_BEAN_NAME</span><span class="o">,</span> <span class="n">ConversionService</span><span class="o">.</span><span class="na">class</span><span class="o">))</span> <span class="o">{</span>
+			<span class="n">beanFactory</span><span class="o">.</span><span class="na">setConversionService</span><span class="o">(</span>
+					<span class="n">beanFactory</span><span class="o">.</span><span class="na">getBean</span><span class="o">(</span><span class="n">CONVERSION_SERVICE_BEAN_NAME</span><span class="o">,</span> <span class="n">ConversionService</span><span class="o">.</span><span class="na">class</span><span class="o">));</span>
+		<span class="o">}</span>
+
+		<span class="c1">// Register a default embedded value resolver if no bean post-processor</span>
+		<span class="c1">// (such as a PropertyPlaceholderConfigurer bean) registered any before:</span>
+		<span class="c1">// at this point, primarily for resolution in annotation attribute values.</span>
+		<span class="k">if</span> <span class="o">(!</span><span class="n">beanFactory</span><span class="o">.</span><span class="na">hasEmbeddedValueResolver</span><span class="o">())</span> <span class="o">{</span>
+			<span class="n">beanFactory</span><span class="o">.</span><span class="na">addEmbeddedValueResolver</span><span class="o">(</span><span class="k">new</span> <span class="n">StringValueResolver</span><span class="o">()</span> <span class="o">{</span>
+				<span class="nd">@Override</span>
+				<span class="kd">public</span> <span class="n">String</span> <span class="nf">resolveStringValue</span><span class="o">(</span><span class="n">String</span> <span class="n">strVal</span><span class="o">)</span> <span class="o">{</span>
+					<span class="k">return</span> <span class="nf">getEnvironment</span><span class="o">().</span><span class="na">resolvePlaceholders</span><span class="o">(</span><span class="n">strVal</span><span class="o">);</span>
+				<span class="o">}</span>
+			<span class="o">});</span>
+		<span class="o">}</span>
+
+		<span class="c1">// Initialize LoadTimeWeaverAware beans early to allow for registering their transformers early.</span>
+		<span class="n">String</span><span class="o">[]</span> <span class="n">weaverAwareNames</span> <span class="o">=</span> <span class="n">beanFactory</span><span class="o">.</span><span class="na">getBeanNamesForType</span><span class="o">(</span><span class="n">LoadTimeWeaverAware</span><span class="o">.</span><span class="na">class</span><span class="o">,</span> <span class="kc">false</span><span class="o">,</span> <span class="kc">false</span><span class="o">);</span>
+		<span class="k">for</span> <span class="o">(</span><span class="n">String</span> <span class="n">weaverAwareName</span> <span class="o">:</span> <span class="n">weaverAwareNames</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">getBean</span><span class="o">(</span><span class="n">weaverAwareName</span><span class="o">);</span>
+		<span class="o">}</span>
+
+		<span class="c1">// Stop using the temporary ClassLoader for type matching.</span>
+		<span class="n">beanFactory</span><span class="o">.</span><span class="na">setTempClassLoader</span><span class="o">(</span><span class="kc">null</span><span class="o">);</span>
+
+		<span class="c1">// Allow for caching all bean definition metadata, not expecting further changes.</span>
+		<span class="n">beanFactory</span><span class="o">.</span><span class="na">freezeConfiguration</span><span class="o">();</span>
+
+		<span class="c1">// Instantiate all remaining (non-lazy-init) singletons.</span>
+		<span class="n">beanFactory</span><span class="o">.</span><span class="na">preInstantiateSingletons</span><span class="o">();</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+
+<ol>
+  <li>设置Conversation Service</li>
+  <li>如果没有设置StringValueResolver，则设置默认的StringValueResolver。StringValueResolver用于解析bean初始化时传入的字符串，这里的字符串包括一些模板类型的通配符，例如${xxx}</li>
+  <li>加载bean</li>
+</ol>
+
+<p>第三步的加载bean是通过bean factory的preInstantiateSingletons来完成的，该函数遍历bean factory中所有的bean definition，如果bean不是抽象的，是单例的，并且不是延迟加载的，则进行初始化。</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>		<span class="c1">// Trigger initialization of all non-lazy singleton beans...</span>
+		<span class="k">for</span> <span class="o">(</span><span class="n">String</span> <span class="n">beanName</span> <span class="o">:</span> <span class="n">beanNames</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">RootBeanDefinition</span> <span class="n">bd</span> <span class="o">=</span> <span class="n">getMergedLocalBeanDefinition</span><span class="o">(</span><span class="n">beanName</span><span class="o">);</span>
+			<span class="k">if</span> <span class="o">(!</span><span class="n">bd</span><span class="o">.</span><span class="na">isAbstract</span><span class="o">()</span> <span class="o">&amp;&amp;</span> <span class="n">bd</span><span class="o">.</span><span class="na">isSingleton</span><span class="o">()</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">bd</span><span class="o">.</span><span class="na">isLazyInit</span><span class="o">())</span> <span class="o">{</span>
+				<span class="k">if</span> <span class="o">(</span><span class="n">isFactoryBean</span><span class="o">(</span><span class="n">beanName</span><span class="o">))</span> <span class="o">{</span>
+					<span class="kd">final</span> <span class="n">FactoryBean</span><span class="o">&lt;?&gt;</span> <span class="n">factory</span> <span class="o">=</span> <span class="o">(</span><span class="n">FactoryBean</span><span class="o">&lt;?&gt;)</span> <span class="n">getBean</span><span class="o">(</span><span class="n">FACTORY_BEAN_PREFIX</span> <span class="o">+</span> <span class="n">beanName</span><span class="o">);</span>
+					<span class="kt">boolean</span> <span class="n">isEagerInit</span><span class="o">;</span>
+					<span class="k">if</span> <span class="o">(</span><span class="n">System</span><span class="o">.</span><span class="na">getSecurityManager</span><span class="o">()</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="n">factory</span> <span class="k">instanceof</span> <span class="n">SmartFactoryBean</span><span class="o">)</span> <span class="o">{</span>
+						<span class="n">isEagerInit</span> <span class="o">=</span> <span class="n">AccessController</span><span class="o">.</span><span class="na">doPrivileged</span><span class="o">(</span><span class="k">new</span> <span class="n">PrivilegedAction</span><span class="o">&lt;</span><span class="n">Boolean</span><span class="o">&gt;()</span> <span class="o">{</span>
+							<span class="nd">@Override</span>
+							<span class="kd">public</span> <span class="n">Boolean</span> <span class="nf">run</span><span class="o">()</span> <span class="o">{</span>
+								<span class="k">return</span> <span class="o">((</span><span class="n">SmartFactoryBean</span><span class="o">&lt;?&gt;)</span> <span class="n">factory</span><span class="o">).</span><span class="na">isEagerInit</span><span class="o">();</span>
+							<span class="o">}</span>
+						<span class="o">},</span> <span class="n">getAccessControlContext</span><span class="o">());</span>
+					<span class="o">}</span>
+					<span class="k">else</span> <span class="o">{</span>
+						<span class="n">isEagerInit</span> <span class="o">=</span> <span class="o">(</span><span class="n">factory</span> <span class="k">instanceof</span> <span class="n">SmartFactoryBean</span> <span class="o">&amp;&amp;</span>
+								<span class="o">((</span><span class="n">SmartFactoryBean</span><span class="o">&lt;?&gt;)</span> <span class="n">factory</span><span class="o">).</span><span class="na">isEagerInit</span><span class="o">());</span>
+					<span class="o">}</span>
+					<span class="k">if</span> <span class="o">(</span><span class="n">isEagerInit</span><span class="o">)</span> <span class="o">{</span>
+						<span class="n">getBean</span><span class="o">(</span><span class="n">beanName</span><span class="o">);</span>
+					<span class="o">}</span>
+				<span class="o">}</span>
+				<span class="k">else</span> <span class="o">{</span>
+					<span class="n">getBean</span><span class="o">(</span><span class="n">beanName</span><span class="o">);</span>
+				<span class="o">}</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+</code></pre></div></div>
+<p>初始化由getBean方法完成，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="nd">@Override</span>
+	<span class="kd">public</span> <span class="n">Object</span> <span class="nf">getBean</span><span class="o">(</span><span class="n">String</span> <span class="n">name</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">BeansException</span> <span class="o">{</span>
+		<span class="k">return</span> <span class="nf">doGetBean</span><span class="o">(</span><span class="n">name</span><span class="o">,</span> <span class="kc">null</span><span class="o">,</span> <span class="kc">null</span><span class="o">,</span> <span class="kc">false</span><span class="o">);</span>
+	<span class="o">}</span>  
+</code></pre></div></div>
+
+<p>doGetBean代码比较长，提炼一下核心的代码如下所示，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>				<span class="c1">// Create bean instance.</span>
+				<span class="k">if</span> <span class="o">(</span><span class="n">mbd</span><span class="o">.</span><span class="na">isSingleton</span><span class="o">())</span> <span class="o">{</span>
+					<span class="n">sharedInstance</span> <span class="o">=</span> <span class="n">getSingleton</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="k">new</span> <span class="n">ObjectFactory</span><span class="o">&lt;</span><span class="n">Object</span><span class="o">&gt;()</span> <span class="o">{</span>
+						<span class="nd">@Override</span>
+						<span class="kd">public</span> <span class="n">Object</span> <span class="nf">getObject</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">BeansException</span> <span class="o">{</span>
+							<span class="k">try</span> <span class="o">{</span>
+								<span class="k">return</span> <span class="nf">createBean</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="n">mbd</span><span class="o">,</span> <span class="n">args</span><span class="o">);</span>
+							<span class="o">}</span>
+							<span class="k">catch</span> <span class="o">(</span><span class="n">BeansException</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+								<span class="c1">// Explicitly remove instance from singleton cache: It might have been put there</span>
+								<span class="c1">// eagerly by the creation process, to allow for circular reference resolution.</span>
+								<span class="c1">// Also remove any beans that received a temporary reference to the bean.</span>
+								<span class="n">destroySingleton</span><span class="o">(</span><span class="n">beanName</span><span class="o">);</span>
+								<span class="k">throw</span> <span class="n">ex</span><span class="o">;</span>
+							<span class="o">}</span>
+						<span class="o">}</span>
+					<span class="o">});</span>
+					<span class="n">bean</span> <span class="o">=</span> <span class="n">getObjectForBeanInstance</span><span class="o">(</span><span class="n">sharedInstance</span><span class="o">,</span> <span class="n">name</span><span class="o">,</span> <span class="n">beanName</span><span class="o">,</span> <span class="n">mbd</span><span class="o">);</span>
+				<span class="o">}</span>
+
+				<span class="k">else</span> <span class="nf">if</span> <span class="o">(</span><span class="n">mbd</span><span class="o">.</span><span class="na">isPrototype</span><span class="o">())</span> <span class="o">{</span>
+					<span class="c1">// It's a prototype -&gt; create a new instance.</span>
+					<span class="n">Object</span> <span class="n">prototypeInstance</span> <span class="o">=</span> <span class="kc">null</span><span class="o">;</span>
+					<span class="k">try</span> <span class="o">{</span>
+						<span class="n">beforePrototypeCreation</span><span class="o">(</span><span class="n">beanName</span><span class="o">);</span>
+						<span class="n">prototypeInstance</span> <span class="o">=</span> <span class="n">createBean</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="n">mbd</span><span class="o">,</span> <span class="n">args</span><span class="o">);</span>
+					<span class="o">}</span>
+					<span class="k">finally</span> <span class="o">{</span>
+						<span class="n">afterPrototypeCreation</span><span class="o">(</span><span class="n">beanName</span><span class="o">);</span>
+					<span class="o">}</span>
+					<span class="n">bean</span> <span class="o">=</span> <span class="n">getObjectForBeanInstance</span><span class="o">(</span><span class="n">prototypeInstance</span><span class="o">,</span> <span class="n">name</span><span class="o">,</span> <span class="n">beanName</span><span class="o">,</span> <span class="n">mbd</span><span class="o">);</span>
+				<span class="o">}</span>
+</code></pre></div></div>
+<p>doGetBean对单例和多例的处理是不一样的，这里以单例为例。bean的创建最终交给了ObjectFactory的getObject方法，getObject调用createBean，createBean调用doCreateBean，doCreateBean先创建bean</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>		<span class="kd">final</span> <span class="n">Object</span> <span class="n">bean</span> <span class="o">=</span> <span class="o">(</span><span class="n">instanceWrapper</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">?</span> <span class="n">instanceWrapper</span><span class="o">.</span><span class="na">getWrappedInstance</span><span class="o">()</span> <span class="o">:</span> <span class="kc">null</span><span class="o">);</span>
+</code></pre></div></div>
+<p>然后调用populateBean初始化bean，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="cm">/**
+	 * Populate the bean instance in the given BeanWrapper with the property values
+	 * from the bean definition.
+	 * @param beanName the name of the bean
+	 * @param mbd the bean definition for the bean
+	 * @param bw BeanWrapper with bean instance
+	 */</span>
+	<span class="kd">protected</span> <span class="kt">void</span> <span class="nf">populateBean</span><span class="o">(</span><span class="n">String</span> <span class="n">beanName</span><span class="o">,</span> <span class="n">RootBeanDefinition</span> <span class="n">mbd</span><span class="o">,</span> <span class="n">BeanWrapper</span> <span class="n">bw</span><span class="o">)</span> <span class="o">{</span>
+		<span class="n">PropertyValues</span> <span class="n">pvs</span> <span class="o">=</span> <span class="n">mbd</span><span class="o">.</span><span class="na">getPropertyValues</span><span class="o">();</span>
+
+		<span class="k">if</span> <span class="o">(</span><span class="n">bw</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="k">if</span> <span class="o">(!</span><span class="n">pvs</span><span class="o">.</span><span class="na">isEmpty</span><span class="o">())</span> <span class="o">{</span>
+				<span class="k">throw</span> <span class="k">new</span> <span class="nf">BeanCreationException</span><span class="o">(</span>
+						<span class="n">mbd</span><span class="o">.</span><span class="na">getResourceDescription</span><span class="o">(),</span> <span class="n">beanName</span><span class="o">,</span> <span class="s">"Cannot apply property values to null instance"</span><span class="o">);</span>
+			<span class="o">}</span>
+			<span class="k">else</span> <span class="o">{</span>
+				<span class="c1">// Skip property population phase for null instance.</span>
+				<span class="k">return</span><span class="o">;</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+
+		<span class="c1">// Give any InstantiationAwareBeanPostProcessors the opportunity to modify the</span>
+		<span class="c1">// state of the bean before properties are set. This can be used, for example,</span>
+		<span class="c1">// to support styles of field injection.</span>
+		<span class="kt">boolean</span> <span class="n">continueWithPropertyPopulation</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+
+		<span class="k">if</span> <span class="o">(!</span><span class="n">mbd</span><span class="o">.</span><span class="na">isSynthetic</span><span class="o">()</span> <span class="o">&amp;&amp;</span> <span class="n">hasInstantiationAwareBeanPostProcessors</span><span class="o">())</span> <span class="o">{</span>
+			<span class="k">for</span> <span class="o">(</span><span class="n">BeanPostProcessor</span> <span class="n">bp</span> <span class="o">:</span> <span class="n">getBeanPostProcessors</span><span class="o">())</span> <span class="o">{</span>
+				<span class="k">if</span> <span class="o">(</span><span class="n">bp</span> <span class="k">instanceof</span> <span class="n">InstantiationAwareBeanPostProcessor</span><span class="o">)</span> <span class="o">{</span>
+					<span class="n">InstantiationAwareBeanPostProcessor</span> <span class="n">ibp</span> <span class="o">=</span> <span class="o">(</span><span class="n">InstantiationAwareBeanPostProcessor</span><span class="o">)</span> <span class="n">bp</span><span class="o">;</span>
+					<span class="k">if</span> <span class="o">(!</span><span class="n">ibp</span><span class="o">.</span><span class="na">postProcessAfterInstantiation</span><span class="o">(</span><span class="n">bw</span><span class="o">.</span><span class="na">getWrappedInstance</span><span class="o">(),</span> <span class="n">beanName</span><span class="o">))</span> <span class="o">{</span>
+						<span class="n">continueWithPropertyPopulation</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+						<span class="k">break</span><span class="o">;</span>
+					<span class="o">}</span>
+				<span class="o">}</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+
+		<span class="k">if</span> <span class="o">(!</span><span class="n">continueWithPropertyPopulation</span><span class="o">)</span> <span class="o">{</span>
+			<span class="k">return</span><span class="o">;</span>
+		<span class="o">}</span>
+
+		<span class="k">if</span> <span class="o">(</span><span class="n">mbd</span><span class="o">.</span><span class="na">getResolvedAutowireMode</span><span class="o">()</span> <span class="o">==</span> <span class="n">RootBeanDefinition</span><span class="o">.</span><span class="na">AUTOWIRE_BY_NAME</span> <span class="o">||</span>
+				<span class="n">mbd</span><span class="o">.</span><span class="na">getResolvedAutowireMode</span><span class="o">()</span> <span class="o">==</span> <span class="n">RootBeanDefinition</span><span class="o">.</span><span class="na">AUTOWIRE_BY_TYPE</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">MutablePropertyValues</span> <span class="n">newPvs</span> <span class="o">=</span> <span class="k">new</span> <span class="n">MutablePropertyValues</span><span class="o">(</span><span class="n">pvs</span><span class="o">);</span>
+
+			<span class="c1">// Add property values based on autowire by name if applicable.</span>
+			<span class="k">if</span> <span class="o">(</span><span class="n">mbd</span><span class="o">.</span><span class="na">getResolvedAutowireMode</span><span class="o">()</span> <span class="o">==</span> <span class="n">RootBeanDefinition</span><span class="o">.</span><span class="na">AUTOWIRE_BY_NAME</span><span class="o">)</span> <span class="o">{</span>
+				<span class="n">autowireByName</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="n">mbd</span><span class="o">,</span> <span class="n">bw</span><span class="o">,</span> <span class="n">newPvs</span><span class="o">);</span>
+			<span class="o">}</span>
+
+			<span class="c1">// Add property values based on autowire by type if applicable.</span>
+			<span class="k">if</span> <span class="o">(</span><span class="n">mbd</span><span class="o">.</span><span class="na">getResolvedAutowireMode</span><span class="o">()</span> <span class="o">==</span> <span class="n">RootBeanDefinition</span><span class="o">.</span><span class="na">AUTOWIRE_BY_TYPE</span><span class="o">)</span> <span class="o">{</span>
+				<span class="n">autowireByType</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="n">mbd</span><span class="o">,</span> <span class="n">bw</span><span class="o">,</span> <span class="n">newPvs</span><span class="o">);</span>
+			<span class="o">}</span>
+
+			<span class="n">pvs</span> <span class="o">=</span> <span class="n">newPvs</span><span class="o">;</span>
+		<span class="o">}</span>
+
+		<span class="kt">boolean</span> <span class="n">hasInstAwareBpps</span> <span class="o">=</span> <span class="n">hasInstantiationAwareBeanPostProcessors</span><span class="o">();</span>
+		<span class="kt">boolean</span> <span class="n">needsDepCheck</span> <span class="o">=</span> <span class="o">(</span><span class="n">mbd</span><span class="o">.</span><span class="na">getDependencyCheck</span><span class="o">()</span> <span class="o">!=</span> <span class="n">RootBeanDefinition</span><span class="o">.</span><span class="na">DEPENDENCY_CHECK_NONE</span><span class="o">);</span>
+
+		<span class="k">if</span> <span class="o">(</span><span class="n">hasInstAwareBpps</span> <span class="o">||</span> <span class="n">needsDepCheck</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">PropertyDescriptor</span><span class="o">[]</span> <span class="n">filteredPds</span> <span class="o">=</span> <span class="n">filterPropertyDescriptorsForDependencyCheck</span><span class="o">(</span><span class="n">bw</span><span class="o">,</span> <span class="n">mbd</span><span class="o">.</span><span class="na">allowCaching</span><span class="o">);</span>
+			<span class="k">if</span> <span class="o">(</span><span class="n">hasInstAwareBpps</span><span class="o">)</span> <span class="o">{</span>
+				<span class="k">for</span> <span class="o">(</span><span class="n">BeanPostProcessor</span> <span class="n">bp</span> <span class="o">:</span> <span class="n">getBeanPostProcessors</span><span class="o">())</span> <span class="o">{</span>
+					<span class="k">if</span> <span class="o">(</span><span class="n">bp</span> <span class="k">instanceof</span> <span class="n">InstantiationAwareBeanPostProcessor</span><span class="o">)</span> <span class="o">{</span>
+						<span class="n">InstantiationAwareBeanPostProcessor</span> <span class="n">ibp</span> <span class="o">=</span> <span class="o">(</span><span class="n">InstantiationAwareBeanPostProcessor</span><span class="o">)</span> <span class="n">bp</span><span class="o">;</span>
+						<span class="n">pvs</span> <span class="o">=</span> <span class="n">ibp</span><span class="o">.</span><span class="na">postProcessPropertyValues</span><span class="o">(</span><span class="n">pvs</span><span class="o">,</span> <span class="n">filteredPds</span><span class="o">,</span> <span class="n">bw</span><span class="o">.</span><span class="na">getWrappedInstance</span><span class="o">(),</span> <span class="n">beanName</span><span class="o">);</span>
+						<span class="k">if</span> <span class="o">(</span><span class="n">pvs</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+							<span class="k">return</span><span class="o">;</span>
+						<span class="o">}</span>
+					<span class="o">}</span>
+				<span class="o">}</span>
+			<span class="o">}</span>
+			<span class="k">if</span> <span class="o">(</span><span class="n">needsDepCheck</span><span class="o">)</span> <span class="o">{</span>
+				<span class="n">checkDependencies</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="n">mbd</span><span class="o">,</span> <span class="n">filteredPds</span><span class="o">,</span> <span class="n">pvs</span><span class="o">);</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+
+		<span class="n">applyPropertyValues</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="n">mbd</span><span class="o">,</span> <span class="n">bw</span><span class="o">,</span> <span class="n">pvs</span><span class="o">);</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+<p>先获取该bean配置的所有property。依次调用bean factory中各个post processor的postProcessAfterInstantiation方法，然后依次调用bean factory中各个post processor的postProcessPropertyValues方法。如果我们设置了 <strong><context:annotation-config></context:annotation-config></strong> ，则会在当前bean对应的类中查找带有 <strong>@Autowired</strong> 注解的field， 然后加载field对应的bean，然后进行注入操作。</p>
+
+<p>然后调用applyPropertyValues加载各个property对应的bean，同时注入到当前bean中，核心代码如下所示，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>		<span class="k">for</span> <span class="o">(</span><span class="n">PropertyValue</span> <span class="n">pv</span> <span class="o">:</span> <span class="n">original</span><span class="o">)</span> <span class="o">{</span>
+			<span class="k">if</span> <span class="o">(</span><span class="n">pv</span><span class="o">.</span><span class="na">isConverted</span><span class="o">())</span> <span class="o">{</span>
+				<span class="n">deepCopy</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">pv</span><span class="o">);</span>
+			<span class="o">}</span>
+			<span class="k">else</span> <span class="o">{</span>
+				<span class="n">String</span> <span class="n">propertyName</span> <span class="o">=</span> <span class="n">pv</span><span class="o">.</span><span class="na">getName</span><span class="o">();</span>
+				<span class="n">Object</span> <span class="n">originalValue</span> <span class="o">=</span> <span class="n">pv</span><span class="o">.</span><span class="na">getValue</span><span class="o">();</span>
+                <span class="c1">// 1</span>
+				<span class="n">Object</span> <span class="n">resolvedValue</span> <span class="o">=</span> <span class="n">valueResolver</span><span class="o">.</span><span class="na">resolveValueIfNecessary</span><span class="o">(</span><span class="n">pv</span><span class="o">,</span> <span class="n">originalValue</span><span class="o">);</span>
+				<span class="n">Object</span> <span class="n">convertedValue</span> <span class="o">=</span> <span class="n">resolvedValue</span><span class="o">;</span>
+				<span class="kt">boolean</span> <span class="n">convertible</span> <span class="o">=</span> <span class="n">bw</span><span class="o">.</span><span class="na">isWritableProperty</span><span class="o">(</span><span class="n">propertyName</span><span class="o">)</span> <span class="o">&amp;&amp;</span>
+						<span class="o">!</span><span class="n">PropertyAccessorUtils</span><span class="o">.</span><span class="na">isNestedOrIndexedProperty</span><span class="o">(</span><span class="n">propertyName</span><span class="o">);</span>
+				<span class="k">if</span> <span class="o">(</span><span class="n">convertible</span><span class="o">)</span> <span class="o">{</span>
+					<span class="n">convertedValue</span> <span class="o">=</span> <span class="n">convertForProperty</span><span class="o">(</span><span class="n">resolvedValue</span><span class="o">,</span> <span class="n">propertyName</span><span class="o">,</span> <span class="n">bw</span><span class="o">,</span> <span class="n">converter</span><span class="o">);</span>
+				<span class="o">}</span>
+				<span class="c1">// Possibly store converted value in merged bean definition,</span>
+				<span class="c1">// in order to avoid re-conversion for every created bean instance.</span>
+				<span class="k">if</span> <span class="o">(</span><span class="n">resolvedValue</span> <span class="o">==</span> <span class="n">originalValue</span><span class="o">)</span> <span class="o">{</span>
+					<span class="k">if</span> <span class="o">(</span><span class="n">convertible</span><span class="o">)</span> <span class="o">{</span>
+						<span class="n">pv</span><span class="o">.</span><span class="na">setConvertedValue</span><span class="o">(</span><span class="n">convertedValue</span><span class="o">);</span>
+					<span class="o">}</span>
+					<span class="n">deepCopy</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">pv</span><span class="o">);</span>
+				<span class="o">}</span>
+				<span class="k">else</span> <span class="nf">if</span> <span class="o">(</span><span class="n">convertible</span> <span class="o">&amp;&amp;</span> <span class="n">originalValue</span> <span class="k">instanceof</span> <span class="n">TypedStringValue</span> <span class="o">&amp;&amp;</span>
+						<span class="o">!((</span><span class="n">TypedStringValue</span><span class="o">)</span> <span class="n">originalValue</span><span class="o">).</span><span class="na">isDynamic</span><span class="o">()</span> <span class="o">&amp;&amp;</span>
+						<span class="o">!(</span><span class="n">convertedValue</span> <span class="k">instanceof</span> <span class="n">Collection</span> <span class="o">||</span> <span class="n">ObjectUtils</span><span class="o">.</span><span class="na">isArray</span><span class="o">(</span><span class="n">convertedValue</span><span class="o">)))</span> <span class="o">{</span>
+					<span class="n">pv</span><span class="o">.</span><span class="na">setConvertedValue</span><span class="o">(</span><span class="n">convertedValue</span><span class="o">);</span>
+					<span class="n">deepCopy</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">pv</span><span class="o">);</span>
+				<span class="o">}</span>
+				<span class="k">else</span> <span class="o">{</span>
+					<span class="n">resolveNecessary</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+					<span class="n">deepCopy</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="k">new</span> <span class="n">PropertyValue</span><span class="o">(</span><span class="n">pv</span><span class="o">,</span> <span class="n">convertedValue</span><span class="o">));</span>
+				<span class="o">}</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+</code></pre></div></div>
+<p>上面的代码1处获取到field的名称和值后，调用valueResolver的resolveValueIfNecessary获取需要注入到field的实际值。resolveValueIfNecessary根据value的不同类型，调用不同的解析函数，如果是自定义的类，则调用resolveReference。resolveReference内部则调用beanFactory的getBean方法递归加载当前bean所依赖的bean。</p>
+
+<p>populateBean设置完依赖之后，则调用initializeBean继续完成bean的初始化操作，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="kd">protected</span> <span class="n">Object</span> <span class="nf">initializeBean</span><span class="o">(</span><span class="kd">final</span> <span class="n">String</span> <span class="n">beanName</span><span class="o">,</span> <span class="kd">final</span> <span class="n">Object</span> <span class="n">bean</span><span class="o">,</span> <span class="n">RootBeanDefinition</span> <span class="n">mbd</span><span class="o">)</span> <span class="o">{</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">System</span><span class="o">.</span><span class="na">getSecurityManager</span><span class="o">()</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">AccessController</span><span class="o">.</span><span class="na">doPrivileged</span><span class="o">(</span><span class="k">new</span> <span class="n">PrivilegedAction</span><span class="o">&lt;</span><span class="n">Object</span><span class="o">&gt;()</span> <span class="o">{</span>
+				<span class="nd">@Override</span>
+				<span class="kd">public</span> <span class="n">Object</span> <span class="nf">run</span><span class="o">()</span> <span class="o">{</span>
+					<span class="n">invokeAwareMethods</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="n">bean</span><span class="o">);</span>
+					<span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+				<span class="o">}</span>
+			<span class="o">},</span> <span class="n">getAccessControlContext</span><span class="o">());</span>
+		<span class="o">}</span>
+		<span class="k">else</span> <span class="o">{</span>
+			<span class="n">invokeAwareMethods</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="n">bean</span><span class="o">);</span>
+		<span class="o">}</span>
+
+		<span class="n">Object</span> <span class="n">wrappedBean</span> <span class="o">=</span> <span class="n">bean</span><span class="o">;</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">mbd</span> <span class="o">==</span> <span class="kc">null</span> <span class="o">||</span> <span class="o">!</span><span class="n">mbd</span><span class="o">.</span><span class="na">isSynthetic</span><span class="o">())</span> <span class="o">{</span>
+            <span class="c1">// 1</span>
+			<span class="n">wrappedBean</span> <span class="o">=</span> <span class="n">applyBeanPostProcessorsBeforeInitialization</span><span class="o">(</span><span class="n">wrappedBean</span><span class="o">,</span> <span class="n">beanName</span><span class="o">);</span>
+		<span class="o">}</span>
+
+		<span class="k">try</span> <span class="o">{</span>
+            <span class="c1">// 2</span>
+			<span class="n">invokeInitMethods</span><span class="o">(</span><span class="n">beanName</span><span class="o">,</span> <span class="n">wrappedBean</span><span class="o">,</span> <span class="n">mbd</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+			<span class="k">throw</span> <span class="k">new</span> <span class="nf">BeanCreationException</span><span class="o">(</span>
+					<span class="o">(</span><span class="n">mbd</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">?</span> <span class="n">mbd</span><span class="o">.</span><span class="na">getResourceDescription</span><span class="o">()</span> <span class="o">:</span> <span class="kc">null</span><span class="o">),</span>
+					<span class="n">beanName</span><span class="o">,</span> <span class="s">"Invocation of init method failed"</span><span class="o">,</span> <span class="n">ex</span><span class="o">);</span>
+		<span class="o">}</span>
+
+		<span class="k">if</span> <span class="o">(</span><span class="n">mbd</span> <span class="o">==</span> <span class="kc">null</span> <span class="o">||</span> <span class="o">!</span><span class="n">mbd</span><span class="o">.</span><span class="na">isSynthetic</span><span class="o">())</span> <span class="o">{</span>
+			<span class="n">wrappedBean</span> <span class="o">=</span> <span class="n">applyBeanPostProcessorsAfterInitialization</span><span class="o">(</span><span class="n">wrappedBean</span><span class="o">,</span> <span class="n">beanName</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">return</span> <span class="n">wrappedBean</span><span class="o">;</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+
+<p>上面的代码主要完成两件事情，</p>
+<ol>
+  <li>调用bean factory中定义的post processor初始化当前bean。如果我们在当前bean对应的类中使用了 <strong>@PostConstruct</strong> 注解符，同时设置了 <strong><context:annotation-config></context:annotation-config></strong> ，则会调用注解符所在的函数进行初始化。对应上面的代码1</li>
+  <li>如果bean对应的类实现了InitializingBean接口，则调用afterPropertiesSet方法。如果bean在定义的时候指定了init-method，则调用init-method。对应上面的代码2</li>
+</ol>
+
+<p><strong><font color="red" size="5">至此spring的加载过程就完成了。</font></strong></p>
+

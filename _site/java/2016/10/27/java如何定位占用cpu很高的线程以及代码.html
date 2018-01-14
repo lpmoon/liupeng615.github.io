@@ -1,0 +1,130 @@
+<p>在线上，我们经常会遇到jvm进程占用cpu很高的情况。产生这种现象的原因多种多样，可能是业务量突增，也可能是由于死循环或者递归无法跳出递归而造成。在这种情况下，我们需要快速的定位出占用cpu高的线程以及其代码的调用栈，以便我们能够快速的做出应对，无论是重启服务器还是代码回滚降级等操作。下文会给出两种方法用于快速定位问题。</p>
+
+<h2 id="测试代码">测试代码</h2>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>  public class Loop {
+    public static void main(String []args) {
+        long j = 0;
+        while (j &lt; Long.MAX_VALUE) {
+            j++;
+        }
+
+        System.out.println(j);
+    }
+  }  
+</code></pre></div></div>
+
+<h2 id="方案1-jstack或者jcmd">方案1 jstack或者jcmd</h2>
+<ul>
+  <li>查找Java对应的进程<br />
+有很多方法比如jcmd, jps, 以及linux自带的 ps -ef|grep java</li>
+  <li>列出进程中所有的线程
+    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code> top -H -p 5169
+</code></pre></div>    </div>
+    <p>这里的5169就是第一步查询出的进程号，上面的top命令执行后可以看到如下的效果，</p>
+    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>PID USER      PR  NI    VIRT    RES    SHR S %CPU %MEM     TIME+ COMMAND                                     
+ 5170 zlover    20   0 2671888  26328  15564 R 78.0  0.9   2:45.64 java Loop                                   
+ 5169 zlover    20   0 2671888  26328  15564 S  0.0  0.9   0:00.00 java Loop                                   
+ 5171 zlover    20   0 2671888  26328  15564 S  0.0  0.9   0:00.00 java Loop                                   
+ 5172 zlover    20   0 2671888  26328  15564 S  0.0  0.9   0:00.00 java Loop                                   
+ 5173 zlover    20   0 2671888  26328  15564 S  0.0  0.9   0:00.00 java Loop                                   
+ 5174 zlover    20   0 2671888  26328  15564 S  0.0  0.9   0:00.00 java Loop                                   
+ 5175 zlover    20   0 2671888  26328  15564 S  0.0  0.9   0:00.00 java Loop                                   
+ 5176 zlover    20   0 2671888  26328  15564 S  0.0  0.9   0:00.00 java Loop                                   
+ 5177 zlover    20   0 2671888  26328  15564 S  0.0  0.9   0:00.00 java Loop                                   
+ 5178 zlover    20   0 2671888  26328  15564 S  0.0  0.9   0:00.09 java Loop
+</code></pre></div>    </div>
+  </li>
+  <li>根据列出的所有线程查找cpu占用率较高的线程
+上面的线程中5170线程占用了很高的cpu，我们将其作为排查的目标</li>
+  <li>将目标线程转换为16进制
+    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>printf %x 5170
+</code></pre></div>    </div>
+    <p>上面的命令的输出结果是1432</p>
+  </li>
+  <li>打印出当前所有线程的调用情况
+使用jcmd和jstack都可以将线程调用情况打印出来，
+    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>jstack 5169 &gt; test
+jcmd 5169 Thread.print &gt; test 
+</code></pre></div>    </div>
+  </li>
+  <li>
+    <p>在打印出的堆栈中查找线程</p>
+
+    <p>打开test文件</p>
+  </li>
+</ul>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>5169:
+
+Full thread dump Java HotSpot(TM) 64-Bit Server VM (25.91-b14 mixed mode):
+
+"Attach Listener" #8 daemon prio=9 os_prio=0 tid=0x00007f2188001000 nid=0x145a waiting on condition [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Service Thread" #7 daemon prio=9 os_prio=0 tid=0x00007f21ac0b4000 nid=0x1439 runnable [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"C1 CompilerThread1" #6 daemon prio=9 os_prio=0 tid=0x00007f21ac0b1000 nid=0x1438 waiting on condition [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"C2 CompilerThread0" #5 daemon prio=9 os_prio=0 tid=0x00007f21ac0ae800 nid=0x1437 waiting on condition [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Signal Dispatcher" #4 daemon prio=9 os_prio=0 tid=0x00007f21ac0ad000 nid=0x1436 runnable [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+"Finalizer" #3 daemon prio=8 os_prio=0 tid=0x00007f21ac07a000 nid=0x1435 in Object.wait() [0x00007f21b153c000]
+   java.lang.Thread.State: WAITING (on object monitor)
+	at java.lang.Object.wait(Native Method)
+	- waiting on &lt;0x00000000d0e08ee0&gt; (a java.lang.ref.ReferenceQueue$Lock)
+	at java.lang.ref.ReferenceQueue.remove(ReferenceQueue.java:143)
+	- locked &lt;0x00000000d0e08ee0&gt; (a java.lang.ref.ReferenceQueue$Lock)
+	at java.lang.ref.ReferenceQueue.remove(ReferenceQueue.java:164)
+	at java.lang.ref.Finalizer$FinalizerThread.run(Finalizer.java:209)
+
+"Reference Handler" #2 daemon prio=10 os_prio=0 tid=0x00007f21ac075800 nid=0x1434 in Object.wait() [0x00007f21b163d000]
+   java.lang.Thread.State: WAITING (on object monitor)
+	at java.lang.Object.wait(Native Method)
+	- waiting on &lt;0x00000000d0e06b50&gt; (a java.lang.ref.Reference$Lock)
+	at java.lang.Object.wait(Object.java:502)
+	at java.lang.ref.Reference.tryHandlePending(Reference.java:191)
+	- locked &lt;0x00000000d0e06b50&gt; (a java.lang.ref.Reference$Lock)
+	at java.lang.ref.Reference$ReferenceHandler.run(Reference.java:153)
+
+"main" #1 prio=5 os_prio=0 tid=0x00007f21ac009800 nid=0x1432 runnable [0x00007f21b5749000]
+   java.lang.Thread.State: RUNNABLE
+	at Loop.main(Loop.java:5)
+
+"VM Thread" os_prio=0 tid=0x00007f21ac06e000 nid=0x1433 runnable 
+
+"VM Periodic Task Thread" os_prio=0 tid=0x00007f21ac0b7000 nid=0x143a waiting on condition 
+
+JNI global references: 9
+</code></pre></div></div>
+
+<p>在文件中搜索0x1432(1432就是刚才我们查询出的线程对应的十六进制线程号)，就可以找到对应的线程以及其调用栈。 很明显当前的main函数
+  在执行loop方法。</p>
+
+<h2 id="方案2-jmc">方案2 JMC</h2>
+
+<p>JMC全称是java mission control, 可以用于动态跟踪jvm进程的状态，并进行数据统计。JMC的安装可以参照
+<a href="http://www.oracle.com/technetwork/java/javaseproducts/mission-control/index.html">http://www.oracle.com/technetwork/java/javaseproducts/mission-control/index.html</a>来进行。</p>
+
+<p>还是运行上面的程序，打开eclipse进入到jmc的视图，可以看到如下数据，
+<img src="http://ww3.sinaimg.cn/large/87f5e2f6jw1fa30aa7xh3j20li04xtad.jpg" alt="" /></p>
+
+<p>3306进程就是我们需要定位的进程，右键该进程会弹出三个选项</p>
+<ul>
+  <li>启动jmx控制台</li>
+  <li>启动飞行记录</li>
+  <li>控制远程JMX代理</li>
+</ul>
+
+<p>我们选择第二项，并且设置采样时长为15s
+<img src="http://ww2.sinaimg.cn/large/87f5e2f6jw1fa30a794p0j20rh0jbjv9.jpg" alt="" /></p>
+
+<p>采样结束后会自动打开对应的数据并以图形化的方式展示给大家，在最最左侧的导航栏点击线程，</p>
+
+<p>选择热点线程，可以看到<img src="http://ww2.sinaimg.cn/large/87f5e2f6jw1fa30a0rad5j20zl06edha.jpg" alt="" /></p>
+
+<p>排在最前面的线程就是我们需要找的。我们还可以继续查看线程栈的情况，<img src="http://ww3.sinaimg.cn/large/87f5e2f6jw1fa309w7s5wj20zy04wq3k.jpg" alt="" /></p>

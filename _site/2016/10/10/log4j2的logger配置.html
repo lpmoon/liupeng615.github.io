@@ -4,44 +4,40 @@
 </blockquote>
 
 <p>在线上通常会打印info及info级别以上的日志，而debug日志通常用于在测试的时候开启, 所以我们需要在log4j2的配置文件中屏蔽debug日志的打印。通常为了实现上面的目标我们会这样做，</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>&lt;loggers&gt;
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;loggers&gt;
     &lt;Logger name="xxxx" level="info"&gt;
         &lt;AppenderRef ref="info-log" level="info"/&gt;
         &lt;AppenderRef ref="warn-log" level="warn"/&gt;
         &lt;AppenderRef ref="error-log" level="error"/&gt;
     &lt;/Logger&gt;
 &lt;/loggers&gt;
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>上面的配置表示，当使用的Logger名字为xxxx的时候，默认的级别是info，也就是低于info级别的日志是不能打印的。而高于info级别的日志会根据配置的appender不同，打印到不同的文件中去。<br />
 但是最近看到一些工程为了不打印debug日志，进行了如下的配置，</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>&lt;loggers&gt;
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;loggers&gt;
     &lt;Logger name="xxxx" level="debug"&gt;
         &lt;AppenderRef ref="info-log" level="info"/&gt;
         &lt;AppenderRef ref="warn-log" level="warn"/&gt;
         &lt;AppenderRef ref="error-log" level="error"/&gt;
     &lt;/Logger&gt;
 &lt;/loggers&gt;
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>上面的配置虽然也可以起到相同的效果，但是理论上性能是比第一种配置要差一些的。至于为什么我们需要从源码的角度分析下，我们进入到slf4j的Log4jLogger中，</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>@Override
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@Override
 public void debug(final String format) {
     logger.logIfEnabled(FQCN, Level.DEBUG, null, format);
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>继续进入到logIfEnabled中，</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>@Override
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@Override
 public void logIfEnabled(final String fqcn, final Level level, final Marker marker, final String message) {
     if (isEnabled(level, marker, message)) {
         logMessage(fqcn, level, marker, message);
     }
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>上面的这段代码很清晰的描述了log4j2的架构，如果当前打印的日志级别满足logger配置的要求则进入到logMessage中进行操作。来看一下isEnabled是如何实现的，</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>@Override
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@Override
 public boolean isEnabled(final Level level, final Marker marker, final String message) {
     return privateConfig.filter(level, marker, message);
 }
@@ -56,8 +52,7 @@ boolean filter(final Level level, final Marker marker, final String msg) {
     }
     return level != null &amp;&amp; intLevel &gt;= level.intLevel();
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>上面的filter函数主要分为两个逻辑，</p>
 <ul>
   <li>获取配置的filter，如果filter的过滤结果是Filter.Result.ACCEPT, 那么认为该日志可以打印。</li>
@@ -67,7 +62,7 @@ boolean filter(final Level level, final Marker marker, final String msg) {
 <p>也就是说如果按照第二种方法进行配置的话，实际上log4j2认为该日志是可以打印的，也就是filter函数返回的是true。那么就会进入到logMessage方法中，而如果采用第一种方法则会直接跳出if语句，不会调用logMessage。由此可以看出第二种方法会比第一种方法多耗时在logMessage的调用上。</p>
 
 <p>为什么第二种方法虽然耗时较长，但是也可以达到目的呢？继续看一下logMessage的实现，代码定位到LoggerConfig的callAppenders方法中，</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>@PerformanceSensitive("allocation")
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@PerformanceSensitive("allocation")
 protected void callAppenders(final LogEvent event) {
     final AppenderControl[] controls = appenders.get();
     //noinspection ForLoopReplaceableByForEach
@@ -75,10 +70,9 @@ protected void callAppenders(final LogEvent event) {
         controls[i].callAppender(event);
     }
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>上面的代码会获取logger配置的所有appender，并且遍历所有appender将logevent交给appender处理。</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>public void callAppender(final LogEvent event) {
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>public void callAppender(final LogEvent event) {
     if (shouldSkip(event)) {
         return;
     }
@@ -88,52 +82,49 @@ protected void callAppenders(final LogEvent event) {
 private boolean shouldSkip(final LogEvent event) {
     return isFilteredByAppenderControl(event) || isFilteredByLevel(event) || isRecursiveCall();
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>关键的地方在于isFilteredByLevel函数的调用，</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>@PerformanceSensitive
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>@PerformanceSensitive
 private boolean isFilteredByLevel(final LogEvent event) {
     return level != null &amp;&amp; intLevel &lt; event.getLevel().intLevel();
 }
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>由于第二种方法配置的appender的level都是高于debug的，所以isFilteredByLevel返回的都是true，从而导致shouldSkip也返回true，后面实际的调用步骤就走不到了，这也就是为什么第二种方法也能达到目的原因。</p>
 
 <p>既然上面提到了第二种性能会差一些，那么我们实际来做一个测试。测试代码如下，</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>package hello;
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">package</span> <span class="n">hello</span><span class="p">;</span>
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.boot.*;
-import org.springframework.boot.autoconfigure.*;
-import org.springframework.stereotype.*;
-import org.springframework.web.bind.annotation.*;
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">slf4j</span><span class="p">.</span><span class="n">Logger</span><span class="p">;</span>
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">slf4j</span><span class="p">.</span><span class="n">LoggerFactory</span><span class="p">;</span>
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">springframework</span><span class="p">.</span><span class="n">boot</span><span class="p">.*;</span>
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">springframework</span><span class="p">.</span><span class="n">boot</span><span class="p">.</span><span class="n">autoconfigure</span><span class="p">.*;</span>
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">springframework</span><span class="p">.</span><span class="n">stereotype</span><span class="p">.*;</span>
+<span class="n">import</span> <span class="n">org</span><span class="p">.</span><span class="n">springframework</span><span class="p">.</span><span class="n">web</span><span class="p">.</span><span class="n">bind</span><span class="p">.</span><span class="n">annotation</span><span class="p">.*;</span>
 
-@Controller
-@EnableAutoConfiguration
-public class SampleController {
-    public static Logger LOGGER = LoggerFactory.getLogger(SampleController.class);
+<span class="p">@</span><span class="n">Controller</span>
+<span class="p">@</span><span class="n">EnableAutoConfiguration</span>
+<span class="k">public</span> <span class="n">class</span> <span class="n">SampleController</span> <span class="p">{</span>
+    <span class="k">public</span> <span class="n">static</span> <span class="n">Logger</span> <span class="n">LOGGER</span> <span class="p">=</span> <span class="n">LoggerFactory</span><span class="p">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">SampleController</span><span class="p">.</span><span class="n">class</span><span class="p">);</span>
 
-    @RequestMapping("/")
-    @ResponseBody
-    String home() {
-        long start = System.currentTimeMillis();
-        for (int i = 0; i &lt; 1000000; i++) {
-            LOGGER.debug("welcome");
-        }
-        long end = System.currentTimeMillis();
-        LOGGER.info("cost {}", end - start);
-        return "welcome";
-    }
+    <span class="p">@</span><span class="n">RequestMapping</span><span class="p">(</span><span class="s2">"/"</span><span class="p">)</span>
+    <span class="p">@</span><span class="n">ResponseBody</span>
+    <span class="k">String</span> <span class="n">home</span><span class="p">()</span> <span class="p">{</span>
+        <span class="n">long</span> <span class="n">start</span> <span class="p">=</span> <span class="nf">System</span><span class="p">.</span><span class="n">currentTimeMillis</span><span class="p">();</span>
+        <span class="n">for</span> <span class="p">(</span><span class="n">int</span> <span class="n">i</span> <span class="p">=</span> <span class="m">0</span><span class="p">;</span> <span class="n">i</span> <span class="p">&lt;</span> <span class="m">1000000</span><span class="p">;</span> <span class="n">i</span><span class="p">++)</span> <span class="p">{</span>
+            <span class="n">LOGGER</span><span class="p">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">"welcome"</span><span class="p">);</span>
+        <span class="p">}</span>
+        <span class="n">long</span> <span class="k">end</span> <span class="p">=</span> <span class="nf">System</span><span class="p">.</span><span class="n">currentTimeMillis</span><span class="p">();</span>
+        <span class="n">LOGGER</span><span class="p">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"cost {}"</span><span class="p">,</span> <span class="k">end</span> <span class="p">-</span> <span class="n">start</span><span class="p">);</span>
+        <span class="n">return</span> <span class="s2">"welcome"</span><span class="p">;</span>
+    <span class="p">}</span>
 
-    public static void main(String[] args) throws Exception {
-        SpringApplication.run(SampleController.class, args);
-    }
-}
-</code></pre>
-</div>
+    <span class="k">public</span> <span class="n">static</span> <span class="n">void</span> <span class="n">main</span><span class="p">(</span><span class="k">String</span><span class="p">[]</span> <span class="n">args</span><span class="p">)</span> <span class="n">throws</span> <span class="n">Exception</span> <span class="p">{</span>
+        <span class="n">SpringApplication</span><span class="p">.</span><span class="nf">run</span><span class="p">(</span><span class="n">SampleController</span><span class="p">.</span><span class="n">class</span><span class="p">,</span> <span class="n">args</span><span class="p">);</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div></div>
 <p>上面的代码在请求的时候循环100万次调用debug打印日志，采用第二种配置的时候，</p>
-<div class="highlighter-rouge"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0" encoding="UTF-8"?&gt;</span>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">&lt;?xml version="1.0" encoding="UTF-8"?&gt;</span>
 <span class="nt">&lt;configuration</span> <span class="na">status=</span><span class="s">"DEBUG"</span><span class="nt">&gt;</span>
     <span class="nt">&lt;appenders&gt;</span>
         <span class="nt">&lt;Console</span> <span class="na">name=</span><span class="s">"consolePrint"</span> <span class="na">target=</span><span class="s">"SYSTEM_OUT"</span><span class="nt">&gt;</span>
@@ -151,23 +142,20 @@ public class SampleController {
         <span class="nt">&lt;/root&gt;</span>
     <span class="nt">&lt;/loggers&gt;</span>
 <span class="nt">&lt;/configuration&gt;</span>
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>连续调用五次的结果如下，</p>
-<div class="highlighter-rouge"><pre class="highlight"><code>01:45:40.624 [http-nio-8080-exec-1] INFO  hello.SampleController - cost 221
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>01:45:40.624 [http-nio-8080-exec-1] INFO  hello.SampleController - cost 221
 01:45:48.300 [http-nio-8080-exec-3] INFO  hello.SampleController - cost 179
 01:45:50.527 [http-nio-8080-exec-4] INFO  hello.SampleController - cost 169
 01:45:52.468 [http-nio-8080-exec-5] INFO  hello.SampleController - cost 178
 01:45:54.069 [http-nio-8080-exec-6] INFO  hello.SampleController - cost 172
-</code></pre>
-</div>
+</code></pre></div></div>
 <p>当采用第一种配置的时候，将<root level="debug">修改为<root level="info">, 连续调用五次的结果如下，</root></root></p>
-<div class="highlighter-rouge"><pre class="highlight"><code>01:51:35.248 [http-nio-8080-exec-1] INFO  hello.SampleController - cost 17
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>01:51:35.248 [http-nio-8080-exec-1] INFO  hello.SampleController - cost 17
 01:51:36.886 [http-nio-8080-exec-3] INFO  hello.SampleController - cost 10
 01:51:38.210 [http-nio-8080-exec-5] INFO  hello.SampleController - cost 4
 01:51:39.169 [http-nio-8080-exec-7] INFO  hello.SampleController - cost 4
 01:51:40.232 [http-nio-8080-exec-9] INFO  hello.SampleController - cost 3
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>很明显第一种性能要高于第二种，虽然平均到单次的时间差别基本上可以忽略不计。但是由于第二种方式明显违反了框架最初的设计意愿，所以还是第一种方法更好，并且更容易让他人明白。</p>

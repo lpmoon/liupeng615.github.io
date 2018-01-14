@@ -33,7 +33,7 @@
 
 <p>服务器：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 import java.io.IOException;
 
 import java.net.ServerSocket;
@@ -80,10 +80,9 @@ public class Server {
 
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 import java.io.IOException;
 
 import java.net.Socket;
@@ -136,12 +135,11 @@ public class SocketHandleThread implements Runnable {
 
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>客户端:</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 import java.io.IOException;
 
 import java.net.Socket;
@@ -176,8 +174,7 @@ public class Client {
 
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>服务器启动后，启动客户端可以看到服务器打印出了以下的内容，</p>
 
@@ -218,7 +215,7 @@ public class Client {
 
 <p>果然由于服务器没有发送FIN导致socket停留在了CLOSE_WAIT.  但是这还不能说明停留在CLOSE_WAIT状态是由于没有调用close()造成的， 为了进一步验证我们需要修改代码，</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 int count = socket.getInputStream().read(bytes);
 
 if (count != -1) {
@@ -237,8 +234,7 @@ if (count != -1) {
 
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>再次运行后， 可以看到socket被正常关闭了。</p>
 

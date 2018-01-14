@@ -1,0 +1,947 @@
+<!-- TOC -->
+
+<ul>
+  <li><a href="#connector简介">connector简介</a></li>
+  <li><a href="#connector实现">connector实现</a>
+    <ul>
+      <li><a href="#init">init</a></li>
+      <li><a href="#start">start</a></li>
+    </ul>
+  </li>
+</ul>
+
+<!-- /TOC -->
+<h1 id="connector简介">connector简介</h1>
+
+<p>tomcat作为web容器，在处理高并发连接方面有着优异的性能，而这都与其精巧的代码架构及实现有关。tomcat将处理请求的整个组件抽象为一个connector，这个connector在tomcat的整个生命周期中负责接受连接，处理请求，返回结果等。比如下面的代码定义了一个处理http请求的connector，</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+    &lt;Connector port="8080" protocol="HTTP/1.1"
+
+               connectionTimeout="20000"
+
+               redirectPort="8443" /&gt;
+
+</code></pre></div></div>
+
+<p>通过上面的代码，我们队connector有了一些初步的印象，</p>
+
+<ol>
+  <li>
+    <p>connector需要定义一个端口，这个端口用于监听接受请求</p>
+  </li>
+  <li>
+    <p>connector需要定义一个协议，这个协议用于解析请求处理请求</p>
+  </li>
+  <li>
+    <p>connector还需要定义一个连接超时时间</p>
+  </li>
+</ol>
+
+<p>除了这些connector还需要什么，它具体是怎么工作的呢？为了弄明白这些，需要深入到connector的具体实现中，</p>
+
+<h1 id="connector实现">connector实现</h1>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+public class Connector extends LifecycleMBeanBase  {
+
+    public Connector(String protocol) {
+
+        setProtocol(protocol);
+
+        // Instantiate protocol handler
+
+        ProtocolHandler p = null;
+
+        try {
+
+            Class&lt;?&gt; clazz = Class.forName(protocolHandlerClassName);
+
+            p = (ProtocolHandler) clazz.newInstance();
+
+        } catch (Exception e) {
+
+            log.error(sm.getString(
+
+                    "coyoteConnector.protocolHandlerInstantiationFailed"), e);
+
+        } finally {
+
+            this.protocolHandler = p;
+
+        }
+
+
+
+        if (!Globals.STRICT_SERVLET_COMPLIANCE) {
+
+            URIEncoding = "UTF-8";
+
+            URIEncodingLower = URIEncoding.toLowerCase(Locale.ENGLISH);
+
+        }
+
+    }
+
+}
+
+</code></pre></div></div>
+
+<p>connector实例化的时候会根据配置的protocolHandlerClassName初始化protocolHandler，这个handler用于后面的协议处理。connector同其所在的容器catalina一样都继承了LifecycleBase，因此它的整个生命周期分为了以下的几步，</p>
+
+<ol>
+  <li>
+    <p>init</p>
+  </li>
+  <li>
+    <p>start</p>
+  </li>
+  <li>
+    <p>stop</p>
+  </li>
+  <li>
+    <p>destroy</p>
+  </li>
+</ol>
+
+<h2 id="init">init</h2>
+
+<p>connector的init过程通过initInternal实现，initInternal最主要的工作是调用protocolHandler的init方法，protocolHandler在connector实例化的时候被初始化。protocolHandler的初始化主要分为两步，</p>
+
+<ol>
+  <li>
+    <p>注册mbean</p>
+  </li>
+  <li>
+    <p>调用endpoint的初始化</p>
+  </li>
+</ol>
+
+<p>由于tomcat支持多协议，并且同一协议也有多种实现，所以protocolHandler在tomcat也有多种实现，为了更好的理解代码，我们选取Http11Nio2Protocol作为我们跟踪代码的主线。Http11Nio2Protocol选取Nio2Endpoint作为其endpoint，Nio2Endpoint的init操作在其抽象的父类中实现，主要调用bind操作完成端口的绑定，</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">init</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">Exception</span> <span class="o">{</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">bindOnInit</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="n">bind</span><span class="o">();</span>
+
+            <span class="n">bindState</span> <span class="o">=</span> <span class="n">BindState</span><span class="o">.</span><span class="na">BOUND_ON_INIT</span><span class="o">;</span>
+
+        <span class="o">}</span>
+
+    <span class="o">}</span>
+
+</code></pre></div></div>
+
+<p>具体的绑定操作由具体的实现类来定义，以下是Nio2Endpoint的实现，</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+   <span class="kd">public</span> <span class="kt">void</span> <span class="nf">bind</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">Exception</span> <span class="o">{</span>
+
+
+
+        <span class="c1">// Create worker collection</span>
+
+        <span class="k">if</span> <span class="o">(</span> <span class="n">getExecutor</span><span class="o">()</span> <span class="o">==</span> <span class="kc">null</span> <span class="o">)</span> <span class="o">{</span>
+
+            <span class="n">createExecutor</span><span class="o">();</span>
+
+        <span class="o">}</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">getExecutor</span><span class="o">()</span> <span class="k">instanceof</span> <span class="n">ExecutorService</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="n">threadGroup</span> <span class="o">=</span> <span class="n">AsynchronousChannelGroup</span><span class="o">.</span><span class="na">withThreadPool</span><span class="o">((</span><span class="n">ExecutorService</span><span class="o">)</span> <span class="n">getExecutor</span><span class="o">());</span>
+
+        <span class="o">}</span>
+
+        <span class="c1">// AsynchronousChannelGroup currently needs exclusive access to its executor service</span>
+
+        <span class="k">if</span> <span class="o">(!</span><span class="n">internalExecutor</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="n">log</span><span class="o">.</span><span class="na">warn</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"endpoint.nio2.exclusiveExecutor"</span><span class="o">));</span>
+
+        <span class="o">}</span>
+
+
+
+        <span class="n">serverSock</span> <span class="o">=</span> <span class="n">AsynchronousServerSocketChannel</span><span class="o">.</span><span class="na">open</span><span class="o">(</span><span class="n">threadGroup</span><span class="o">);</span>
+
+        <span class="n">socketProperties</span><span class="o">.</span><span class="na">setProperties</span><span class="o">(</span><span class="n">serverSock</span><span class="o">);</span>
+
+        <span class="n">InetSocketAddress</span> <span class="n">addr</span> <span class="o">=</span> <span class="o">(</span><span class="n">getAddress</span><span class="o">()!=</span><span class="kc">null</span><span class="o">?</span><span class="k">new</span> <span class="n">InetSocketAddress</span><span class="o">(</span><span class="n">getAddress</span><span class="o">(),</span><span class="n">getPort</span><span class="o">()):</span><span class="k">new</span> <span class="n">InetSocketAddress</span><span class="o">(</span><span class="n">getPort</span><span class="o">()));</span>
+
+        <span class="n">serverSock</span><span class="o">.</span><span class="na">bind</span><span class="o">(</span><span class="n">addr</span><span class="o">,</span><span class="n">getBacklog</span><span class="o">());</span>
+
+
+
+        <span class="c1">// Initialize thread count defaults for acceptor, poller</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">acceptorThreadCount</span> <span class="o">!=</span> <span class="mi">1</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="c1">// NIO2 does not allow any form of IO concurrency</span>
+
+            <span class="n">acceptorThreadCount</span> <span class="o">=</span> <span class="mi">1</span><span class="o">;</span>
+
+        <span class="o">}</span>
+
+
+
+        <span class="c1">// Initialize SSL if needed</span>
+
+        <span class="n">initialiseSsl</span><span class="o">();</span>
+
+    <span class="o">}</span>
+
+</code></pre></div></div>
+
+<ol>
+  <li>
+    <p>创建线程池</p>
+  </li>
+  <li>
+    <p>根据设置的监听地址以及端口和backlog数量初始化监听端口，这里用到了nio.2的一些东西</p>
+  </li>
+  <li>
+    <p>重置acceptor线程数</p>
+  </li>
+  <li>
+    <p>初始化ssl</p>
+  </li>
+</ol>
+
+<p>到这里connector的初始化完成，下面就会进入到启动阶段。</p>
+
+<h2 id="start">start</h2>
+
+<p>connector的启动阶段依然延续了init的老套路，connector-&gt;protocolHanlder-&gt;endpoint，最终还是会进入到Nio2Endpoint的startInternal,</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+    <span class="cm">/**
+
+     * Start the NIO2 endpoint, creating acceptor.
+
+     */</span>
+
+    <span class="nd">@Override</span>
+
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">startInternal</span><span class="o">()</span> <span class="kd">throws</span> <span class="n">Exception</span> <span class="o">{</span>
+
+
+
+        <span class="k">if</span> <span class="o">(!</span><span class="n">running</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="n">allClosed</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+
+            <span class="n">running</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+
+            <span class="n">paused</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+
+
+
+            <span class="n">processorCache</span> <span class="o">=</span> <span class="k">new</span> <span class="n">SynchronizedStack</span><span class="o">&lt;&gt;(</span><span class="n">SynchronizedStack</span><span class="o">.</span><span class="na">DEFAULT_SIZE</span><span class="o">,</span>
+
+                    <span class="n">socketProperties</span><span class="o">.</span><span class="na">getProcessorCache</span><span class="o">());</span>
+
+            <span class="n">nioChannels</span> <span class="o">=</span> <span class="k">new</span> <span class="n">SynchronizedStack</span><span class="o">&lt;&gt;(</span><span class="n">SynchronizedStack</span><span class="o">.</span><span class="na">DEFAULT_SIZE</span><span class="o">,</span>
+
+                    <span class="n">socketProperties</span><span class="o">.</span><span class="na">getBufferPool</span><span class="o">());</span>
+
+
+
+            <span class="c1">// Create worker collection</span>
+
+            <span class="k">if</span> <span class="o">(</span> <span class="n">getExecutor</span><span class="o">()</span> <span class="o">==</span> <span class="kc">null</span> <span class="o">)</span> <span class="o">{</span>
+
+                <span class="n">createExecutor</span><span class="o">();</span>
+
+            <span class="o">}</span>
+
+
+
+            <span class="n">initializeConnectionLatch</span><span class="o">();</span>
+
+            <span class="n">startAcceptorThreads</span><span class="o">();</span>
+
+        <span class="o">}</span>
+
+    <span class="o">}</span>
+
+</code></pre></div></div>
+
+<ol>
+  <li>
+    <p>创建存放SocketProcessorBase和Nio2Channel的stack。前者用于处理消息。</p>
+  </li>
+  <li>
+    <p>再次确认线程池是否初始化，如果没有则重新初始化</p>
+  </li>
+  <li>
+    <p>初始化最大连接限制，其内部实现采用了tomcat自己实现的LimitLatch。</p>
+  </li>
+  <li>
+    <p>启动acceptor线程，这里只会启动一个线程，这是因为在init阶段对acceptor线程数做了处理，如果用户配置的线程数大于1，则重置为1。这是因为NIO.2不允许并行操作。</p>
+  </li>
+</ol>
+
+<p>启动acceptor的线程的操作如下所示，</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+    <span class="kd">protected</span> <span class="kd">final</span> <span class="kt">void</span> <span class="nf">startAcceptorThreads</span><span class="o">()</span> <span class="o">{</span>
+
+        <span class="kt">int</span> <span class="n">count</span> <span class="o">=</span> <span class="n">getAcceptorThreadCount</span><span class="o">();</span>
+
+        <span class="n">acceptors</span> <span class="o">=</span> <span class="k">new</span> <span class="n">Acceptor</span><span class="o">[</span><span class="n">count</span><span class="o">];</span>
+
+
+
+        <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">count</span><span class="o">;</span> <span class="n">i</span><span class="o">++)</span> <span class="o">{</span>
+
+            <span class="n">acceptors</span><span class="o">[</span><span class="n">i</span><span class="o">]</span> <span class="o">=</span> <span class="n">createAcceptor</span><span class="o">();</span>
+
+            <span class="n">String</span> <span class="n">threadName</span> <span class="o">=</span> <span class="n">getName</span><span class="o">()</span> <span class="o">+</span> <span class="s">"-Acceptor-"</span> <span class="o">+</span> <span class="n">i</span><span class="o">;</span>
+
+            <span class="n">acceptors</span><span class="o">[</span><span class="n">i</span><span class="o">].</span><span class="na">setThreadName</span><span class="o">(</span><span class="n">threadName</span><span class="o">);</span>
+
+            <span class="n">Thread</span> <span class="n">t</span> <span class="o">=</span> <span class="k">new</span> <span class="n">Thread</span><span class="o">(</span><span class="n">acceptors</span><span class="o">[</span><span class="n">i</span><span class="o">],</span> <span class="n">threadName</span><span class="o">);</span>
+
+            <span class="n">t</span><span class="o">.</span><span class="na">setPriority</span><span class="o">(</span><span class="n">getAcceptorThreadPriority</span><span class="o">());</span>
+
+            <span class="n">t</span><span class="o">.</span><span class="na">setDaemon</span><span class="o">(</span><span class="n">getDaemon</span><span class="o">());</span>
+
+            <span class="n">t</span><span class="o">.</span><span class="na">start</span><span class="o">();</span>
+
+        <span class="o">}</span>
+
+    <span class="o">}</span>
+
+</code></pre></div></div>
+
+<p>acceptor线程的具体定义在Nio2Endpoint中，其具体实现比较长，我们需要做一下分解</p>
+
+<ul>
+  <li>如果线程被暂停，则需要进入内层的while循环，为了防止线程空转耗费cpu，线程每50ms被唤醒一次重新检查线程是否被启动</li>
+</ul>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+                <span class="c1">// Loop if endpoint is paused</span>
+
+                <span class="k">while</span> <span class="o">(</span><span class="n">paused</span> <span class="o">&amp;&amp;</span> <span class="n">running</span><span class="o">)</span> <span class="o">{</span>
+
+                    <span class="n">state</span> <span class="o">=</span> <span class="n">AcceptorState</span><span class="o">.</span><span class="na">PAUSED</span><span class="o">;</span>
+
+                    <span class="k">try</span> <span class="o">{</span>
+
+                        <span class="n">Thread</span><span class="o">.</span><span class="na">sleep</span><span class="o">(</span><span class="mi">50</span><span class="o">);</span>
+
+                    <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">InterruptedException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+
+                        <span class="c1">// Ignore</span>
+
+                    <span class="o">}</span>
+
+                <span class="o">}</span>
+
+</code></pre></div></div>
+
+<ul>
+  <li>如果线程被终止，则跳出线程的外层循环</li>
+</ul>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+ if (!running) {
+
+                    break;
+
+                }
+
+</code></pre></div></div>
+
+<ul>
+  <li>对计数器进行加一操作，接受新的连接</li>
+</ul>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+                    <span class="c1">//if we have reached max connections, wait</span>
+
+                    <span class="n">countUpOrAwaitConnection</span><span class="o">();</span>
+
+
+
+                    <span class="n">AsynchronousSocketChannel</span> <span class="n">socket</span> <span class="o">=</span> <span class="kc">null</span><span class="o">;</span>
+
+                    <span class="k">try</span> <span class="o">{</span>
+
+                        <span class="c1">// Accept the next incoming connection from the server</span>
+
+                        <span class="c1">// socket</span>
+
+                        <span class="n">socket</span> <span class="o">=</span> <span class="n">serverSock</span><span class="o">.</span><span class="na">accept</span><span class="o">().</span><span class="na">get</span><span class="o">();</span>
+
+                    <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Exception</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+
+                        <span class="c1">// We didn't get a socket</span>
+
+                        <span class="n">countDownConnection</span><span class="o">();</span>
+
+                        <span class="k">if</span> <span class="o">(</span><span class="n">running</span><span class="o">)</span> <span class="o">{</span>
+
+                            <span class="c1">// Introduce delay if necessary</span>
+
+                            <span class="n">errorDelay</span> <span class="o">=</span> <span class="n">handleExceptionWithDelay</span><span class="o">(</span><span class="n">errorDelay</span><span class="o">);</span>
+
+                            <span class="c1">// re-throw</span>
+
+                            <span class="k">throw</span> <span class="n">e</span><span class="o">;</span>
+
+                        <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+
+                            <span class="k">break</span><span class="o">;</span>
+
+                        <span class="o">}</span>
+
+                    <span class="o">}</span>
+
+                    <span class="c1">// Successful accept, reset the error delay</span>
+
+                    <span class="n">errorDelay</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span>
+
+</code></pre></div></div>
+
+<p>这里需要注意的是计数器操作在接受连接之前，这样才能保证连接数的精准，设想一次如果先调用accept，然后才对计数器操作加一，在高并发的情况下很可能导致服务器大量连接。同时如果接收连接异常，需要恢复计数器，也就是减一操作。</p>
+
+<ul>
+  <li>处理新的连接</li>
+</ul>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+                    <span class="c1">// Configure the socket</span>
+
+                    <span class="k">if</span> <span class="o">(</span><span class="n">running</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">paused</span><span class="o">)</span> <span class="o">{</span>
+
+                        <span class="c1">// setSocketOptions() will hand the socket off to</span>
+
+                        <span class="c1">// an appropriate processor if successful</span>
+
+                        <span class="k">if</span> <span class="o">(!</span><span class="n">setSocketOptions</span><span class="o">(</span><span class="n">socket</span><span class="o">))</span> <span class="o">{</span>
+
+                            <span class="n">closeSocket</span><span class="o">(</span><span class="n">socket</span><span class="o">);</span>
+
+                       <span class="o">}</span>
+
+                    <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+
+                        <span class="n">closeSocket</span><span class="o">(</span><span class="n">socket</span><span class="o">);</span>
+
+                    <span class="o">}</span>
+
+</code></pre></div></div>
+
+<p>具体的操作在setSocketOptions中，</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+    <span class="kd">protected</span> <span class="kt">boolean</span> <span class="nf">setSocketOptions</span><span class="o">(</span><span class="n">AsynchronousSocketChannel</span> <span class="n">socket</span><span class="o">)</span> <span class="o">{</span>
+
+        <span class="k">try</span> <span class="o">{</span>
+
+            <span class="c1">// 步骤1</span>
+
+            <span class="n">socketProperties</span><span class="o">.</span><span class="na">setProperties</span><span class="o">(</span><span class="n">socket</span><span class="o">);</span>
+
+            <span class="c1">// 步骤2</span>
+
+            <span class="n">Nio2Channel</span> <span class="n">channel</span> <span class="o">=</span> <span class="n">nioChannels</span><span class="o">.</span><span class="na">pop</span><span class="o">();</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">channel</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="n">SocketBufferHandler</span> <span class="n">bufhandler</span> <span class="o">=</span> <span class="k">new</span> <span class="n">SocketBufferHandler</span><span class="o">(</span>
+
+                        <span class="n">socketProperties</span><span class="o">.</span><span class="na">getAppReadBufSize</span><span class="o">(),</span>
+
+                        <span class="n">socketProperties</span><span class="o">.</span><span class="na">getAppWriteBufSize</span><span class="o">(),</span>
+
+                        <span class="n">socketProperties</span><span class="o">.</span><span class="na">getDirectBuffer</span><span class="o">());</span>
+
+                <span class="k">if</span> <span class="o">(</span><span class="n">isSSLEnabled</span><span class="o">())</span> <span class="o">{</span>
+
+                    <span class="n">channel</span> <span class="o">=</span> <span class="k">new</span> <span class="n">SecureNio2Channel</span><span class="o">(</span><span class="n">bufhandler</span><span class="o">,</span> <span class="k">this</span><span class="o">);</span>
+
+                <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+
+                    <span class="n">channel</span> <span class="o">=</span> <span class="k">new</span> <span class="n">Nio2Channel</span><span class="o">(</span><span class="n">bufhandler</span><span class="o">);</span>
+
+                <span class="o">}</span>
+
+            <span class="o">}</span>
+
+            <span class="n">Nio2SocketWrapper</span> <span class="n">socketWrapper</span> <span class="o">=</span> <span class="k">new</span> <span class="n">Nio2SocketWrapper</span><span class="o">(</span><span class="n">channel</span><span class="o">,</span> <span class="k">this</span><span class="o">);</span>
+
+            <span class="n">channel</span><span class="o">.</span><span class="na">reset</span><span class="o">(</span><span class="n">socket</span><span class="o">,</span> <span class="n">socketWrapper</span><span class="o">);</span>
+
+            <span class="n">socketWrapper</span><span class="o">.</span><span class="na">setReadTimeout</span><span class="o">(</span><span class="n">getSocketProperties</span><span class="o">().</span><span class="na">getSoTimeout</span><span class="o">());</span>
+
+            <span class="n">socketWrapper</span><span class="o">.</span><span class="na">setWriteTimeout</span><span class="o">(</span><span class="n">getSocketProperties</span><span class="o">().</span><span class="na">getSoTimeout</span><span class="o">());</span>
+
+            <span class="n">socketWrapper</span><span class="o">.</span><span class="na">setKeepAliveLeft</span><span class="o">(</span><span class="n">Nio2Endpoint</span><span class="o">.</span><span class="na">this</span><span class="o">.</span><span class="na">getMaxKeepAliveRequests</span><span class="o">());</span>
+
+            <span class="n">socketWrapper</span><span class="o">.</span><span class="na">setSecure</span><span class="o">(</span><span class="n">isSSLEnabled</span><span class="o">());</span>
+
+            <span class="n">socketWrapper</span><span class="o">.</span><span class="na">setReadTimeout</span><span class="o">(</span><span class="n">getSoTimeout</span><span class="o">());</span>
+
+            <span class="n">socketWrapper</span><span class="o">.</span><span class="na">setWriteTimeout</span><span class="o">(</span><span class="n">getSoTimeout</span><span class="o">());</span>
+
+            <span class="c1">// Continue processing on another thread</span>
+
+            <span class="c1">// 步骤3</span>
+
+            <span class="k">return</span> <span class="nf">processSocket</span><span class="o">(</span><span class="n">socketWrapper</span><span class="o">,</span> <span class="n">SocketEvent</span><span class="o">.</span><span class="na">OPEN_READ</span><span class="o">,</span> <span class="kc">true</span><span class="o">);</span>
+
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">t</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="n">ExceptionUtils</span><span class="o">.</span><span class="na">handleThrowable</span><span class="o">(</span><span class="n">t</span><span class="o">);</span>
+
+            <span class="n">log</span><span class="o">.</span><span class="na">error</span><span class="o">(</span><span class="s">""</span><span class="o">,</span><span class="n">t</span><span class="o">);</span>
+
+        <span class="o">}</span>
+
+        <span class="c1">// Tell to close the socket</span>
+
+        <span class="k">return</span> <span class="kc">false</span><span class="o">;</span>
+
+    <span class="o">}</span>
+
+</code></pre></div></div>
+
+<p>首先会设置socket的一些属性，然后封装成为socketWrapper，socketWrapper包含了多个handler，分别用于读取数据完毕，写入数据完毕后的回调操作。最后调用processSocket开始处理。processSocket会将socketWrapper和event(此时为SocketEvent.OPEN_READ)封装成SocketProcessorBase，放入到线程池中执行。</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+<span class="kd">public</span> <span class="kt">boolean</span> <span class="nf">processSocket</span><span class="o">(</span><span class="n">SocketWrapperBase</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;</span> <span class="n">socketWrapper</span><span class="o">,</span>
+
+            <span class="n">SocketEvent</span> <span class="n">event</span><span class="o">,</span> <span class="kt">boolean</span> <span class="n">dispatch</span><span class="o">)</span> <span class="o">{</span>
+
+        <span class="k">try</span> <span class="o">{</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">socketWrapper</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="k">return</span> <span class="kc">false</span><span class="o">;</span>
+
+            <span class="o">}</span>
+
+            <span class="n">SocketProcessorBase</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;</span> <span class="n">sc</span> <span class="o">=</span> <span class="n">processorCache</span><span class="o">.</span><span class="na">pop</span><span class="o">();</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">sc</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="n">sc</span> <span class="o">=</span> <span class="n">createSocketProcessor</span><span class="o">(</span><span class="n">socketWrapper</span><span class="o">,</span> <span class="n">event</span><span class="o">);</span>
+
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+
+                <span class="n">sc</span><span class="o">.</span><span class="na">reset</span><span class="o">(</span><span class="n">socketWrapper</span><span class="o">,</span> <span class="n">event</span><span class="o">);</span>
+
+            <span class="o">}</span>
+
+            <span class="n">Executor</span> <span class="n">executor</span> <span class="o">=</span> <span class="n">getExecutor</span><span class="o">();</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">dispatch</span> <span class="o">&amp;&amp;</span> <span class="n">executor</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="n">executor</span><span class="o">.</span><span class="na">execute</span><span class="o">(</span><span class="n">sc</span><span class="o">);</span>
+
+            <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+
+                <span class="n">sc</span><span class="o">.</span><span class="na">run</span><span class="o">();</span>
+
+            <span class="o">}</span>
+
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">RejectedExecutionException</span> <span class="n">ree</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="n">getLog</span><span class="o">().</span><span class="na">warn</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"endpoint.executor.fail"</span><span class="o">,</span> <span class="n">socketWrapper</span><span class="o">)</span> <span class="o">,</span> <span class="n">ree</span><span class="o">);</span>
+
+            <span class="k">return</span> <span class="kc">false</span><span class="o">;</span>
+
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">t</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="n">ExceptionUtils</span><span class="o">.</span><span class="na">handleThrowable</span><span class="o">(</span><span class="n">t</span><span class="o">);</span>
+
+            <span class="c1">// This means we got an OOM or similar creating a thread, or that</span>
+
+            <span class="c1">// the pool and its queue are full</span>
+
+            <span class="n">getLog</span><span class="o">().</span><span class="na">error</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"endpoint.process.fail"</span><span class="o">),</span> <span class="n">t</span><span class="o">);</span>
+
+            <span class="k">return</span> <span class="kc">false</span><span class="o">;</span>
+
+        <span class="o">}</span>
+
+        <span class="k">return</span> <span class="kc">true</span><span class="o">;</span>
+
+    <span class="o">}</span>
+
+</code></pre></div></div>
+
+<p>SocketProcessorBase的初始化由createSocketProcessor完成，而createSocketProcessor的具体定义在Nio2Endpoint中，</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+    <span class="nd">@Override</span>
+
+    <span class="kd">protected</span> <span class="n">SocketProcessorBase</span><span class="o">&lt;</span><span class="n">Nio2Channel</span><span class="o">&gt;</span> <span class="nf">createSocketProcessor</span><span class="o">(</span>
+
+            <span class="n">SocketWrapperBase</span><span class="o">&lt;</span><span class="n">Nio2Channel</span><span class="o">&gt;</span> <span class="n">socketWrapper</span><span class="o">,</span> <span class="n">SocketEvent</span> <span class="n">event</span><span class="o">)</span> <span class="o">{</span>
+
+        <span class="k">return</span> <span class="k">new</span> <span class="nf">SocketProcessor</span><span class="o">(</span><span class="n">socketWrapper</span><span class="o">,</span> <span class="n">event</span><span class="o">);</span>
+
+    <span class="o">}</span>
+
+</code></pre></div></div>
+
+<p>SocketProcessor中最主要的步骤是获取handler，然后调用handler的process方法。</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+                <span class="k">if</span> <span class="o">(</span><span class="n">handshake</span> <span class="o">==</span> <span class="mi">0</span><span class="o">)</span> <span class="o">{</span>
+
+                    <span class="n">SocketState</span> <span class="n">state</span> <span class="o">=</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">OPEN</span><span class="o">;</span>
+
+                    <span class="c1">// Process the request from this socket</span>
+
+                    <span class="k">if</span> <span class="o">(</span><span class="n">event</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+
+                        <span class="n">state</span> <span class="o">=</span> <span class="n">getHandler</span><span class="o">().</span><span class="na">process</span><span class="o">(</span><span class="n">socketWrapper</span><span class="o">,</span> <span class="n">SocketEvent</span><span class="o">.</span><span class="na">OPEN_READ</span><span class="o">);</span>
+
+                    <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+
+                        <span class="n">state</span> <span class="o">=</span> <span class="n">getHandler</span><span class="o">().</span><span class="na">process</span><span class="o">(</span><span class="n">socketWrapper</span><span class="o">,</span> <span class="n">event</span><span class="o">);</span>
+
+                    <span class="o">}</span>
+
+                    <span class="k">if</span> <span class="o">(</span><span class="n">state</span> <span class="o">==</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">CLOSED</span><span class="o">)</span> <span class="o">{</span>
+
+                        <span class="c1">// Close socket and pool</span>
+
+                        <span class="n">closeSocket</span><span class="o">(</span><span class="n">socketWrapper</span><span class="o">);</span>
+
+                        <span class="k">if</span> <span class="o">(</span><span class="n">running</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">paused</span><span class="o">)</span> <span class="o">{</span>
+
+                            <span class="k">if</span> <span class="o">(!</span><span class="n">nioChannels</span><span class="o">.</span><span class="na">push</span><span class="o">(</span><span class="n">socketWrapper</span><span class="o">.</span><span class="na">getSocket</span><span class="o">()))</span> <span class="o">{</span>
+
+                                <span class="n">socketWrapper</span><span class="o">.</span><span class="na">getSocket</span><span class="o">().</span><span class="na">free</span><span class="o">();</span>
+
+                            <span class="o">}</span>
+
+                        <span class="o">}</span>
+
+                    <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">state</span> <span class="o">==</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">UPGRADING</span><span class="o">)</span> <span class="o">{</span>
+
+                        <span class="n">launch</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+
+                    <span class="o">}</span>
+
+                <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">handshake</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span> <span class="o">)</span> <span class="o">{</span>
+
+                    <span class="n">closeSocket</span><span class="o">(</span><span class="n">socketWrapper</span><span class="o">);</span>
+
+                    <span class="k">if</span> <span class="o">(</span><span class="n">running</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">paused</span><span class="o">)</span> <span class="o">{</span>
+
+                        <span class="k">if</span> <span class="o">(!</span><span class="n">nioChannels</span><span class="o">.</span><span class="na">push</span><span class="o">(</span><span class="n">socketWrapper</span><span class="o">.</span><span class="na">getSocket</span><span class="o">()))</span> <span class="o">{</span>
+
+                            <span class="n">socketWrapper</span><span class="o">.</span><span class="na">getSocket</span><span class="o">().</span><span class="na">free</span><span class="o">();</span>
+
+                        <span class="o">}</span>
+
+                    <span class="o">}</span>
+
+                <span class="o">}</span>
+
+</code></pre></div></div>
+
+<p>这个handler是ConnectionHandler的实例，handler的process代码很长，这里删除一些对主流程影响不是很大的代码，</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
+      <span class="nd">@Override</span>
+
+        <span class="kd">public</span> <span class="n">SocketState</span> <span class="nf">process</span><span class="o">(</span><span class="n">SocketWrapperBase</span><span class="o">&lt;</span><span class="n">S</span><span class="o">&gt;</span> <span class="n">wrapper</span><span class="o">,</span> <span class="n">SocketEvent</span> <span class="n">status</span><span class="o">)</span> <span class="o">{</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">getLog</span><span class="o">().</span><span class="na">isDebugEnabled</span><span class="o">())</span> <span class="o">{</span>
+
+                <span class="n">getLog</span><span class="o">().</span><span class="na">debug</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"abstractConnectionHandler.process"</span><span class="o">,</span>
+
+                        <span class="n">wrapper</span><span class="o">.</span><span class="na">getSocket</span><span class="o">(),</span> <span class="n">status</span><span class="o">));</span>
+
+            <span class="o">}</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">wrapper</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="c1">// Nothing to do. Socket has been closed.</span>
+
+                <span class="k">return</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">CLOSED</span><span class="o">;</span>
+
+            <span class="o">}</span>
+
+
+
+            <span class="n">S</span> <span class="n">socket</span> <span class="o">=</span> <span class="n">wrapper</span><span class="o">.</span><span class="na">getSocket</span><span class="o">();</span>
+
+
+
+            <span class="n">Processor</span> <span class="n">processor</span> <span class="o">=</span> <span class="n">connections</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">socket</span><span class="o">);</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">getLog</span><span class="o">().</span><span class="na">isDebugEnabled</span><span class="o">())</span> <span class="o">{</span>
+
+                <span class="n">getLog</span><span class="o">().</span><span class="na">debug</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"abstractConnectionHandler.connectionsGet"</span><span class="o">,</span>
+
+                        <span class="n">processor</span><span class="o">,</span> <span class="n">socket</span><span class="o">));</span>
+
+            <span class="o">}</span>
+
+
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">processor</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="c1">// Make sure an async timeout doesn't fire</span>
+
+                <span class="n">getProtocol</span><span class="o">().</span><span class="na">removeWaitingProcessor</span><span class="o">(</span><span class="n">processor</span><span class="o">);</span>
+
+            <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">status</span> <span class="o">==</span> <span class="n">SocketEvent</span><span class="o">.</span><span class="na">DISCONNECT</span> <span class="o">||</span> <span class="n">status</span> <span class="o">==</span> <span class="n">SocketEvent</span><span class="o">.</span><span class="na">ERROR</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="c1">// Nothing to do. Endpoint requested a close and there is no</span>
+
+                <span class="c1">// longer a processor associated with this socket.</span>
+
+                <span class="k">return</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">CLOSED</span><span class="o">;</span>
+
+            <span class="o">}</span>
+
+
+
+            <span class="n">ContainerThreadMarker</span><span class="o">.</span><span class="na">set</span><span class="o">();</span>
+
+
+
+            <span class="k">try</span> <span class="o">{</span>
+
+				<span class="c1">// 省略代码。。。。。。</span>
+
+                <span class="k">if</span> <span class="o">(</span><span class="n">processor</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+
+                    <span class="n">processor</span> <span class="o">=</span> <span class="n">recycledProcessors</span><span class="o">.</span><span class="na">pop</span><span class="o">();</span>
+
+                    <span class="k">if</span> <span class="o">(</span><span class="n">getLog</span><span class="o">().</span><span class="na">isDebugEnabled</span><span class="o">())</span> <span class="o">{</span>
+
+                        <span class="n">getLog</span><span class="o">().</span><span class="na">debug</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"abstractConnectionHandler.processorPop"</span><span class="o">,</span>
+
+                                <span class="n">processor</span><span class="o">));</span>
+
+                    <span class="o">}</span>
+
+                <span class="o">}</span>
+
+                <span class="k">if</span> <span class="o">(</span><span class="n">processor</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+
+                    <span class="n">processor</span> <span class="o">=</span> <span class="n">getProtocol</span><span class="o">().</span><span class="na">createProcessor</span><span class="o">();</span>
+
+                    <span class="n">register</span><span class="o">(</span><span class="n">processor</span><span class="o">);</span>
+
+                <span class="o">}</span>
+
+
+
+                <span class="n">processor</span><span class="o">.</span><span class="na">setSslSupport</span><span class="o">(</span>
+
+                        <span class="n">wrapper</span><span class="o">.</span><span class="na">getSslSupport</span><span class="o">(</span><span class="n">getProtocol</span><span class="o">().</span><span class="na">getClientCertProvider</span><span class="o">()));</span>
+
+
+
+                <span class="c1">// Associate the processor with the connection</span>
+
+                <span class="n">connections</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">socket</span><span class="o">,</span> <span class="n">processor</span><span class="o">);</span>
+
+
+
+                <span class="n">SocketState</span> <span class="n">state</span> <span class="o">=</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">CLOSED</span><span class="o">;</span>
+
+                <span class="k">do</span> <span class="o">{</span>
+
+                    <span class="n">state</span> <span class="o">=</span> <span class="n">processor</span><span class="o">.</span><span class="na">process</span><span class="o">(</span><span class="n">wrapper</span><span class="o">,</span> <span class="n">status</span><span class="o">);</span>
+
+
+
+                    <span class="k">if</span> <span class="o">(</span><span class="n">state</span> <span class="o">==</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">UPGRADING</span><span class="o">)</span> <span class="o">{</span>
+
+						<span class="c1">// 省略代码。。。。。。</span>
+
+                    <span class="o">}</span>
+
+                <span class="o">}</span> <span class="k">while</span> <span class="o">(</span> <span class="n">state</span> <span class="o">==</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">UPGRADING</span><span class="o">);</span>
+
+
+
+                <span class="k">if</span> <span class="o">(</span><span class="n">state</span> <span class="o">==</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">LONG</span><span class="o">)</span> <span class="o">{</span>
+
+                    <span class="c1">// In the middle of processing a request/response. Keep the</span>
+
+                    <span class="c1">// socket associated with the processor. Exact requirements</span>
+
+                    <span class="c1">// depend on type of long poll</span>
+
+                    <span class="n">longPoll</span><span class="o">(</span><span class="n">wrapper</span><span class="o">,</span> <span class="n">processor</span><span class="o">);</span>
+
+                    <span class="k">if</span> <span class="o">(</span><span class="n">processor</span><span class="o">.</span><span class="na">isAsync</span><span class="o">())</span> <span class="o">{</span>
+
+                        <span class="n">getProtocol</span><span class="o">().</span><span class="na">addWaitingProcessor</span><span class="o">(</span><span class="n">processor</span><span class="o">);</span>
+
+                    <span class="o">}</span>
+
+                <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">state</span> <span class="o">==</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">OPEN</span><span class="o">)</span> <span class="o">{</span>
+
+                    <span class="c1">// In keep-alive but between requests. OK to recycle</span>
+
+                    <span class="c1">// processor. Continue to poll for the next request.</span>
+
+                    <span class="n">connections</span><span class="o">.</span><span class="na">remove</span><span class="o">(</span><span class="n">socket</span><span class="o">);</span>
+
+                    <span class="n">release</span><span class="o">(</span><span class="n">processor</span><span class="o">);</span>
+
+                    <span class="n">wrapper</span><span class="o">.</span><span class="na">registerReadInterest</span><span class="o">();</span>
+
+                <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">state</span> <span class="o">==</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">SENDFILE</span><span class="o">)</span> <span class="o">{</span>
+
+                    <span class="c1">// Sendfile in progress. If it fails, the socket will be</span>
+
+                    <span class="c1">// closed. If it works, the socket either be added to the</span>
+
+                    <span class="c1">// poller (or equivalent) to await more data or processed</span>
+
+                    <span class="c1">// if there are any pipe-lined requests remaining.</span>
+
+                <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">state</span> <span class="o">==</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">UPGRADED</span><span class="o">)</span> <span class="o">{</span>
+
+                    <span class="c1">// Don't add sockets back to the poller if this was a</span>
+
+                    <span class="c1">// non-blocking write otherwise the poller may trigger</span>
+
+                    <span class="c1">// multiple read events which may lead to thread starvation</span>
+
+                    <span class="c1">// in the connector. The write() method will add this socket</span>
+
+                    <span class="c1">// to the poller if necessary.</span>
+
+                    <span class="k">if</span> <span class="o">(</span><span class="n">status</span> <span class="o">!=</span> <span class="n">SocketEvent</span><span class="o">.</span><span class="na">OPEN_WRITE</span><span class="o">)</span> <span class="o">{</span>
+
+                        <span class="n">longPoll</span><span class="o">(</span><span class="n">wrapper</span><span class="o">,</span> <span class="n">processor</span><span class="o">);</span>
+
+                    <span class="o">}</span>
+
+                <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+
+                    <span class="c1">// Connection closed. OK to recycle the processor. Upgrade</span>
+
+                    <span class="c1">// processors are not recycled.</span>
+
+                    <span class="n">connections</span><span class="o">.</span><span class="na">remove</span><span class="o">(</span><span class="n">socket</span><span class="o">);</span>
+
+                    <span class="k">if</span> <span class="o">(</span><span class="n">processor</span><span class="o">.</span><span class="na">isUpgrade</span><span class="o">())</span> <span class="o">{</span>
+
+                    	<span class="c1">// 省略代码。。。。。。</span>
+
+                    <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+
+                        <span class="n">release</span><span class="o">(</span><span class="n">processor</span><span class="o">);</span>
+
+                    <span class="o">}</span>
+
+                <span class="o">}</span>
+
+                <span class="k">return</span> <span class="n">state</span><span class="o">;</span>
+
+            <span class="o">}</span> <span class="k">catch</span><span class="o">(</span><span class="n">java</span><span class="o">.</span><span class="na">net</span><span class="o">.</span><span class="na">SocketException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="c1">// SocketExceptions are normal</span>
+
+                <span class="n">getLog</span><span class="o">().</span><span class="na">debug</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span>
+
+                        <span class="s">"abstractConnectionHandler.socketexception.debug"</span><span class="o">),</span> <span class="n">e</span><span class="o">);</span>
+
+            <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">java</span><span class="o">.</span><span class="na">io</span><span class="o">.</span><span class="na">IOException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="c1">// IOExceptions are normal</span>
+
+                <span class="n">getLog</span><span class="o">().</span><span class="na">debug</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span>
+
+                        <span class="s">"abstractConnectionHandler.ioexception.debug"</span><span class="o">),</span> <span class="n">e</span><span class="o">);</span>
+
+            <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">ProtocolException</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="c1">// Protocol exceptions normally mean the client sent invalid or</span>
+
+                <span class="c1">// incomplete data.</span>
+
+                <span class="n">getLog</span><span class="o">().</span><span class="na">debug</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span>
+
+                        <span class="s">"abstractConnectionHandler.protocolexception.debug"</span><span class="o">),</span> <span class="n">e</span><span class="o">);</span>
+
+            <span class="o">}</span>
+
+            <span class="c1">// Future developers: if you discover any other</span>
+
+            <span class="c1">// rare-but-nonfatal exceptions, catch them here, and log as</span>
+
+            <span class="c1">// above.</span>
+
+            <span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+
+                <span class="n">ExceptionUtils</span><span class="o">.</span><span class="na">handleThrowable</span><span class="o">(</span><span class="n">e</span><span class="o">);</span>
+
+                <span class="c1">// any other exception or error is odd. Here we log it</span>
+
+                <span class="c1">// with "ERROR" level, so it will show up even on</span>
+
+                <span class="c1">// less-than-verbose logs.</span>
+
+                <span class="n">getLog</span><span class="o">().</span><span class="na">error</span><span class="o">(</span><span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span><span class="s">"abstractConnectionHandler.error"</span><span class="o">),</span> <span class="n">e</span><span class="o">);</span>
+
+            <span class="o">}</span> <span class="k">finally</span> <span class="o">{</span>
+
+                <span class="n">ContainerThreadMarker</span><span class="o">.</span><span class="na">clear</span><span class="o">();</span>
+
+            <span class="o">}</span>
+
+
+
+            <span class="c1">// Make sure socket/processor is removed from the list of current</span>
+
+            <span class="c1">// connections</span>
+
+            <span class="n">connections</span><span class="o">.</span><span class="na">remove</span><span class="o">(</span><span class="n">socket</span><span class="o">);</span>
+
+            <span class="n">release</span><span class="o">(</span><span class="n">processor</span><span class="o">);</span>
+
+            <span class="k">return</span> <span class="n">SocketState</span><span class="o">.</span><span class="na">CLOSED</span><span class="o">;</span>
+
+        <span class="o">}</span>
+
+</code></pre></div></div>
+
+<ol>
+  <li>
+    <p>根据socket获取Processor，这里的Processors涉及到具体的协议。</p>
+  </li>
+  <li>
+    <p>如果获取成功，则将Processor从waitingProcessors中移除，否则进入3</p>
+  </li>
+  <li>
+    <p>如果当前status为DISCONNECT或者ERROR，则返回SocketState.CLOSED，process结束；否则计入到4</p>
+  </li>
+  <li>
+    <p>如果Processor为空，则创建新的Processor，并且注册Processor。</p>
+  </li>
+  <li>
+    <p>调用Processor的process方法进行连接处理</p>
+  </li>
+  <li>
+    <p>根据返回的state进行处理</p>
+  </li>
+</ol>
+
+<p>其中主流程在Processor的process方法中，主要涉及到了读取数据，进行协议解析，然后根据之前在初始化阶段解析的分发规则将消息分配给对应的应用进行处理，然后写入返回值。这其中还包含了读取数据完毕后以及写入数据完毕后的handler的回调（在socketWrapper初始化的时候注册的）。</p>
+
+<p>再次回到SocketProcessorBase中，获取到ConnectionHandler的返回值后，如果返回值是SocketState.CLOSED，则调用closeSocket(socketWrapper)关闭socket，在closeSocket中会将当前的连接数减一。</p>
+
+<p>至此一个完整的连接完成了。</p>
+

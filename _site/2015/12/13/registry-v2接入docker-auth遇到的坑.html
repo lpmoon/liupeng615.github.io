@@ -22,7 +22,7 @@
 
 <p>通过阅读代码发现，当发送PATCH请求的时候会判断当前的url和整次推送请求的协议是否相同（整次请求的协议也就是这个镜像推送的时候是采用http还是https），如果不相同则不会添加对应的鉴权信息。这PATCH的请求是上一次发送的POST请求返回的Location，也就是说这个location是http的而不是https。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 // /vendor/src/github.com/docker/distribution/registry/client/transport/transport.go
 
 // tries to refresh/fetch a new token.
@@ -127,12 +127,11 @@ func (ea *endpointAuthorizer) ModifyRequest(req *http.Request) error {
 
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>继续阅读registry的代码发现POST请求构建返回的location的时候是根据POST请求中的一个header(X-Forwarded-Proto)来判断当前的请求是http还是https，如果是http的话则设置Location为http协议(下面代码##1的位置)。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 // /vendor/src/github.com/docker/distribution/registry/api/v2/urls.go
 
 // NewURLBuilderFromRequest uses information from an *http.Request to
@@ -227,8 +226,7 @@ func NewURLBuilderFromRequest(r *http.Request) *URLBuilder {
 
 }
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>这个header的作用是告诉服务器经过代理服务器转发的请求的原始协议是什么。</p>
 
@@ -242,9 +240,8 @@ func NewURLBuilderFromRequest(r *http.Request) *URLBuilder {
 
 <p>最前端nginx转发的时候配置如下，</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 proxy_set_header  X-Forwarded-Proto $scheme;
 
-</code></pre>
-</div>
+</code></pre></div></div>
 

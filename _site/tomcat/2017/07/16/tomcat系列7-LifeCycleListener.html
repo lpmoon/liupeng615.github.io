@@ -1,0 +1,346 @@
+<!-- TOC -->
+
+<ul>
+  <li><a href="#threadlocalleakpreventionlistener">ThreadLocalLeakPreventionListener</a></li>
+  <li><a href="#engineconfig">EngineConfig</a></li>
+  <li><a href="#hostconfig">HostConfig</a></li>
+  <li><a href="#jrememoryleakpreventionlistener">JreMemoryLeakPreventionListener</a></li>
+  <li><a href="#globalresourceslifecyclelistener">GlobalResourcesLifecycleListener</a></li>
+  <li><a href="#versionloggerlistener">VersionLoggerListener</a></li>
+  <li><a href="#securitylistener">SecurityListener</a></li>
+  <li><a href="#自定义listener">自定义Listener</a></li>
+</ul>
+
+<!-- /TOC -->
+<p>LifecycleListener用于定义生命周期事件监听器，监听的时间包括组件启动和停止等。LifecycleListener的定义如下，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">public</span> <span class="kd">interface</span> <span class="nc">LifecycleListener</span> <span class="o">{</span>
+
+
+    <span class="cm">/**
+     * Acknowledge the occurrence of the specified event.
+     *
+     * @param event LifecycleEvent that has occurred
+     */</span>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">lifecycleEvent</span><span class="o">(</span><span class="n">LifecycleEvent</span> <span class="n">event</span><span class="o">);</span>
+
+
+<span class="o">}</span>
+</code></pre></div></div>
+<p>生命周期的各个阶段的定义位于Lifecycle中，各个阶段的状态转移如下所示，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="o">*</span>            <span class="n">start</span><span class="o">()</span>
+ <span class="o">*</span>  <span class="o">-----------------------------</span>
+ <span class="o">*</span>  <span class="o">|</span>                           <span class="o">|</span>
+ <span class="o">*</span>  <span class="o">|</span> <span class="n">init</span><span class="o">()</span>                    <span class="o">|</span>
+ <span class="o">*</span> <span class="n">NEW</span> <span class="o">-</span><span class="err">»</span><span class="o">--</span> <span class="n">INITIALIZING</span>        <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span> <span class="o">|</span>           <span class="o">|</span>              <span class="o">|</span>     <span class="o">------------------</span><span class="err">«</span><span class="o">-----------------------</span>
+ <span class="o">*</span> <span class="o">|</span> <span class="o">|</span>           <span class="o">|</span><span class="n">auto</span>          <span class="o">|</span>     <span class="o">|</span>                                        <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span> <span class="o">|</span>          <span class="err">\</span><span class="o">|/</span>    <span class="n">start</span><span class="o">()</span> <span class="err">\</span><span class="o">|/</span>   <span class="err">\</span><span class="o">|/</span>     <span class="n">auto</span>          <span class="n">auto</span>         <span class="nf">stop</span><span class="o">()</span> <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span> <span class="o">|</span>      <span class="n">INITIALIZED</span> <span class="o">--</span><span class="err">»</span><span class="o">--</span> <span class="n">STARTING_PREP</span> <span class="o">--</span><span class="err">»</span><span class="o">-</span> <span class="n">STARTING</span> <span class="o">--</span><span class="err">»</span><span class="o">-</span> <span class="n">STARTED</span> <span class="o">--</span><span class="err">»</span><span class="o">---</span>  <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span> <span class="o">|</span>         <span class="o">|</span>                                                            <span class="o">|</span>  <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span> <span class="o">|</span><span class="n">destroy</span><span class="o">()|</span>                                                            <span class="o">|</span>  <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span> <span class="o">--</span><span class="err">»</span><span class="o">-----</span><span class="err">«</span><span class="o">--</span>    <span class="o">------------------------</span><span class="err">«</span><span class="o">--------------------------------</span>  <span class="o">^</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">|</span>          <span class="o">|</span>                                                          <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">|</span>         <span class="err">\</span><span class="o">|/</span>          <span class="n">auto</span>                 <span class="n">auto</span>              <span class="nf">start</span><span class="o">()</span> <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">|</span>     <span class="n">STOPPING_PREP</span> <span class="o">----</span><span class="err">»</span><span class="o">----</span> <span class="n">STOPPING</span> <span class="o">------</span><span class="err">»</span><span class="o">-----</span> <span class="n">STOPPED</span> <span class="o">-----</span><span class="err">»</span><span class="o">-----</span>
+ <span class="o">*</span> <span class="o">|</span>    <span class="err">\</span><span class="o">|/</span>                               <span class="o">^</span>                     <span class="o">|</span>  <span class="o">^</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">|</span>               <span class="n">stop</span><span class="o">()</span>           <span class="o">|</span>                     <span class="o">|</span>  <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">|</span>       <span class="o">--------------------------</span>                     <span class="o">|</span>  <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">|</span>       <span class="o">|</span>                                              <span class="o">|</span>  <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">|</span>       <span class="o">|</span>    <span class="n">destroy</span><span class="o">()</span>                       <span class="n">destroy</span><span class="o">()</span> <span class="o">|</span>  <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">|</span>    <span class="n">FAILED</span> <span class="o">----</span><span class="err">»</span><span class="o">------</span> <span class="n">DESTROYING</span> <span class="o">---</span><span class="err">«</span><span class="o">-----------------</span>  <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">|</span>                        <span class="o">^</span>     <span class="o">|</span>                          <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">|</span>     <span class="n">destroy</span><span class="o">()</span>          <span class="o">|</span>     <span class="o">|</span><span class="n">auto</span>                      <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>     <span class="o">--------</span><span class="err">»</span><span class="o">-----------------</span>    <span class="err">\</span><span class="o">|/</span>                         <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>                                 <span class="n">DESTROYED</span>                     <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>                                                               <span class="o">|</span>
+ <span class="o">*</span> <span class="o">|</span>                            <span class="n">stop</span><span class="o">()</span>                             <span class="o">|</span>
+ <span class="o">*</span> <span class="o">----</span><span class="err">»</span><span class="o">-----------------------------</span><span class="err">»</span><span class="o">------------------------------</span>
+</code></pre></div></div>
+<p>在大多数情况下tomcat中的组件出现生命周期迁移都会触发LifecycleBase的fireLifecycleEvent方法，该方法内部依次调用当前组件的各个listener的lifecycleEvent，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">fireLifecycleEvent</span><span class="o">(</span><span class="n">String</span> <span class="n">type</span><span class="o">,</span> <span class="n">Object</span> <span class="n">data</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">LifecycleEvent</span> <span class="n">event</span> <span class="o">=</span> <span class="k">new</span> <span class="n">LifecycleEvent</span><span class="o">(</span><span class="k">this</span><span class="o">,</span> <span class="n">type</span><span class="o">,</span> <span class="n">data</span><span class="o">);</span>
+        <span class="k">for</span> <span class="o">(</span><span class="n">LifecycleListener</span> <span class="n">listener</span> <span class="o">:</span> <span class="n">lifecycleListeners</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">listener</span><span class="o">.</span><span class="na">lifecycleEvent</span><span class="o">(</span><span class="n">event</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+</code></pre></div></div>
+<p>Listener的定义需要在server.xml中，并且位于<code class="highlighter-rouge">&lt;Server&gt;&lt;/Server&gt;</code>标签内部，比如</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nt">&lt;Server</span> <span class="na">port=</span><span class="s">"8005"</span> <span class="na">shutdown=</span><span class="s">"SHUTDOWN"</span><span class="nt">&gt;</span>
+  <span class="nt">&lt;Listener</span> <span class="na">className=</span><span class="s">"org.apache.catalina.startup.VersionLoggerListener"</span> <span class="nt">/&gt;</span>
+  <span class="c">&lt;!-- Security listener. Documentation at /docs/config/listeners.html
+  &lt;Listener className="org.apache.catalina.security.SecurityListener" /&gt;
+  --&gt;</span>
+  <span class="c">&lt;!--APR library loader. Documentation at /docs/apr.html --&gt;</span>
+  <span class="nt">&lt;Listener</span> <span class="na">className=</span><span class="s">"org.apache.catalina.core.AprLifecycleListener"</span> <span class="na">SSLEngine=</span><span class="s">"on"</span> <span class="nt">/&gt;</span>
+  <span class="c">&lt;!-- Prevent memory leaks due to use of particular java/javax APIs--&gt;</span>
+  <span class="nt">&lt;Listener</span> <span class="na">className=</span><span class="s">"org.apache.catalina.core.JreMemoryLeakPreventionListener"</span> <span class="nt">/&gt;</span>
+  <span class="nt">&lt;Listener</span> <span class="na">className=</span><span class="s">"org.apache.catalina.mbeans.GlobalResourcesLifecycleListener"</span> <span class="nt">/&gt;</span>
+  <span class="nt">&lt;Listener</span> <span class="na">className=</span><span class="s">"org.apache.catalina.core.ThreadLocalLeakPreventionListener"</span> <span class="nt">/&gt;</span>
+ 
+  。。。。。。
+<span class="nt">&lt;/Server&gt;</span>
+</code></pre></div></div>
+<p>定义的所有Listener都会出现在StandardServer的lifecycleListeners中，根据Listener定义的不同，有些Listener会传递到StandardServer的Child中去，比如ThreadLocalLeakPreventionListener会最终传递到Context中。</p>
+
+<p>来看几个比较常用的Listener，</p>
+
+<h1 id="threadlocalleakpreventionlistener">ThreadLocalLeakPreventionListener</h1>
+<p>当Context停止的时候会调用到ThreadLocalLeakPreventionListener, 该Listener用于停止当前线程池中的所有线程，防止出现thread-local相关的内存泄漏。该Listener会调用stopIdleThreads方法，该方法内部会调用ThreadPoolExecutor的contextStopping方法停止所有线程。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">contextStopping</span><span class="o">()</span> <span class="o">{</span>
+        <span class="k">this</span><span class="o">.</span><span class="na">lastContextStoppedTime</span><span class="o">.</span><span class="na">set</span><span class="o">(</span><span class="n">System</span><span class="o">.</span><span class="na">currentTimeMillis</span><span class="o">());</span>
+
+        <span class="c1">// save the current pool parameters to restore them later</span>
+        <span class="kt">int</span> <span class="n">savedCorePoolSize</span> <span class="o">=</span> <span class="k">this</span><span class="o">.</span><span class="na">getCorePoolSize</span><span class="o">();</span>
+        <span class="n">TaskQueue</span> <span class="n">taskQueue</span> <span class="o">=</span>
+                <span class="n">getQueue</span><span class="o">()</span> <span class="k">instanceof</span> <span class="n">TaskQueue</span> <span class="o">?</span> <span class="o">(</span><span class="n">TaskQueue</span><span class="o">)</span> <span class="n">getQueue</span><span class="o">()</span> <span class="o">:</span> <span class="kc">null</span><span class="o">;</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">taskQueue</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+            <span class="c1">// note by slaurent : quite oddly threadPoolExecutor.setCorePoolSize</span>
+            <span class="c1">// checks that queue.remainingCapacity()==0. I did not understand</span>
+            <span class="c1">// why, but to get the intended effect of waking up idle threads, I</span>
+            <span class="c1">// temporarily fake this condition.</span>
+            <span class="n">taskQueue</span><span class="o">.</span><span class="na">setForcedRemainingCapacity</span><span class="o">(</span><span class="n">Integer</span><span class="o">.</span><span class="na">valueOf</span><span class="o">(</span><span class="mi">0</span><span class="o">));</span>
+        <span class="o">}</span>
+
+        <span class="c1">// setCorePoolSize(0) wakes idle threads</span>
+        <span class="k">this</span><span class="o">.</span><span class="na">setCorePoolSize</span><span class="o">(</span><span class="mi">0</span><span class="o">);</span>
+
+        <span class="c1">// TaskQueue.take() takes care of timing out, so that we are sure that</span>
+        <span class="c1">// all threads of the pool are renewed in a limited time, something like</span>
+        <span class="c1">// (threadKeepAlive + longest request time)</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">taskQueue</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+            <span class="c1">// ok, restore the state of the queue and pool</span>
+            <span class="n">taskQueue</span><span class="o">.</span><span class="na">setForcedRemainingCapacity</span><span class="o">(</span><span class="kc">null</span><span class="o">);</span>
+        <span class="o">}</span>
+        <span class="k">this</span><span class="o">.</span><span class="na">setCorePoolSize</span><span class="o">(</span><span class="n">savedCorePoolSize</span><span class="o">);</span>
+    <span class="o">}</span>
+</code></pre></div></div>
+<p>上面代码首先将taskQueue的remainingCapacity调整为0，然后将corePoolSize调整为0，设置lastContextStoppedTime为当前时间。taskQueue为0，corePoolSize为0表示新提交的任务将由新创建的worker来完成。老的worker在通过获取task(getTask())的时候会进入到TaskQueue的take方法，该方法会判断该线程的创建时间是否早于laskContextStoppedTime，如果早于则终止该线程。</p>
+
+<p>处理完之后还需要恢复现场，这样保证其他Context的请求能够得到正常的处理。</p>
+
+<p>这样做之所有能够防止内存泄漏是因为ThreadLocal内部的资源是跟Thread绑定到一起的，强制停止所有线程后，跟ThreadLocal相关的资源就可以被回收了。</p>
+
+<h1 id="engineconfig">EngineConfig</h1>
+
+<p>这个Listener一般由tomcat自动加载，不需要手工在server.xml中进行配置。该Listener位于StandardEngine中，目前只是用来打印相关启动日志</p>
+
+<h1 id="hostconfig">HostConfig</h1>
+<p>这个Listener一般由tomcat自动加载，不需要手工在server.xml中进行配置。该Listener位于StandardHost中，主要用来加载相关app(context)，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="cm">/**
+     * Deploy applications for any directories or WAR files that are found
+     * in our "application root" directory.
+     */</span>
+    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">deployApps</span><span class="o">()</span> <span class="o">{</span>
+
+        <span class="n">File</span> <span class="n">appBase</span> <span class="o">=</span> <span class="n">host</span><span class="o">.</span><span class="na">getAppBaseFile</span><span class="o">();</span>
+        <span class="n">File</span> <span class="n">configBase</span> <span class="o">=</span> <span class="n">host</span><span class="o">.</span><span class="na">getConfigBaseFile</span><span class="o">();</span>
+        <span class="n">String</span><span class="o">[]</span> <span class="n">filteredAppPaths</span> <span class="o">=</span> <span class="n">filterAppPaths</span><span class="o">(</span><span class="n">appBase</span><span class="o">.</span><span class="na">list</span><span class="o">());</span>
+        <span class="c1">// Deploy XML descriptors from configBase</span>
+        <span class="n">deployDescriptors</span><span class="o">(</span><span class="n">configBase</span><span class="o">,</span> <span class="n">configBase</span><span class="o">.</span><span class="na">list</span><span class="o">());</span>
+        <span class="c1">// Deploy WARs</span>
+        <span class="n">deployWARs</span><span class="o">(</span><span class="n">appBase</span><span class="o">,</span> <span class="n">filteredAppPaths</span><span class="o">);</span>
+        <span class="c1">// Deploy expanded folders</span>
+        <span class="n">deployDirectories</span><span class="o">(</span><span class="n">appBase</span><span class="o">,</span> <span class="n">filteredAppPaths</span><span class="o">);</span>
+
+    <span class="o">}</span>
+</code></pre></div></div>
+
+<h1 id="jrememoryleakpreventionlistener">JreMemoryLeakPreventionListener</h1>
+
+<p>由于在默认情况context的类加载由WebappClassLoader完成。而WebappClassLoader类加载的默认优先级是子优先，也就是先由自己加载，这是为了保证各个context之间引用不同的版本jar时互相之间不受影响。但是在某些情况下会导致在context被销毁的时候，WebappClassLoader及其加载的类无法被回收。这个Listener就是用来解决这个问题，某些类的加载在Listener中会被代理给SystemClassLoader。</p>
+
+<h1 id="globalresourceslifecyclelistener">GlobalResourcesLifecycleListener</h1>
+
+<p>用于创建全局的JNDI资源的Mbeans。</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">createMBeans</span><span class="o">(</span><span class="n">String</span> <span class="n">prefix</span><span class="o">,</span> <span class="n">Context</span> <span class="n">context</span><span class="o">)</span>
+        <span class="kd">throws</span> <span class="n">NamingException</span> <span class="o">{</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">log</span><span class="o">.</span><span class="na">isDebugEnabled</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">debug</span><span class="o">(</span><span class="s">"Creating MBeans for Global JNDI Resources in Context '"</span> <span class="o">+</span>
+                <span class="n">prefix</span> <span class="o">+</span> <span class="s">"'"</span><span class="o">);</span>
+        <span class="o">}</span>
+
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="n">NamingEnumeration</span><span class="o">&lt;</span><span class="n">Binding</span><span class="o">&gt;</span> <span class="n">bindings</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="na">listBindings</span><span class="o">(</span><span class="s">""</span><span class="o">);</span>
+            <span class="k">while</span> <span class="o">(</span><span class="n">bindings</span><span class="o">.</span><span class="na">hasMore</span><span class="o">())</span> <span class="o">{</span>
+                <span class="n">Binding</span> <span class="n">binding</span> <span class="o">=</span> <span class="n">bindings</span><span class="o">.</span><span class="na">next</span><span class="o">();</span>
+                <span class="n">String</span> <span class="n">name</span> <span class="o">=</span> <span class="n">prefix</span> <span class="o">+</span> <span class="n">binding</span><span class="o">.</span><span class="na">getName</span><span class="o">();</span>
+                <span class="n">Object</span> <span class="n">value</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="na">lookup</span><span class="o">(</span><span class="n">binding</span><span class="o">.</span><span class="na">getName</span><span class="o">());</span>
+                <span class="k">if</span> <span class="o">(</span><span class="n">log</span><span class="o">.</span><span class="na">isDebugEnabled</span><span class="o">())</span> <span class="o">{</span>
+                    <span class="n">log</span><span class="o">.</span><span class="na">debug</span><span class="o">(</span><span class="s">"Checking resource "</span> <span class="o">+</span> <span class="n">name</span><span class="o">);</span>
+                <span class="o">}</span>
+                <span class="k">if</span> <span class="o">(</span><span class="n">value</span> <span class="k">instanceof</span> <span class="n">Context</span><span class="o">)</span> <span class="o">{</span>
+                    <span class="n">createMBeans</span><span class="o">(</span><span class="n">name</span> <span class="o">+</span> <span class="s">"/"</span><span class="o">,</span> <span class="o">(</span><span class="n">Context</span><span class="o">)</span> <span class="n">value</span><span class="o">);</span>
+                <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">value</span> <span class="k">instanceof</span> <span class="n">UserDatabase</span><span class="o">)</span> <span class="o">{</span>
+                    <span class="k">try</span> <span class="o">{</span>
+                        <span class="n">createMBeans</span><span class="o">(</span><span class="n">name</span><span class="o">,</span> <span class="o">(</span><span class="n">UserDatabase</span><span class="o">)</span> <span class="n">value</span><span class="o">);</span>
+                    <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Exception</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+                        <span class="n">log</span><span class="o">.</span><span class="na">error</span><span class="o">(</span><span class="s">"Exception creating UserDatabase MBeans for "</span> <span class="o">+</span> <span class="n">name</span><span class="o">,</span>
+                                <span class="n">e</span><span class="o">);</span>
+                    <span class="o">}</span>
+                <span class="o">}</span>
+            <span class="o">}</span>
+        <span class="o">}</span> <span class="k">catch</span><span class="o">(</span> <span class="n">RuntimeException</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">error</span><span class="o">(</span><span class="s">"RuntimeException "</span> <span class="o">+</span> <span class="n">ex</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">catch</span><span class="o">(</span> <span class="n">OperationNotSupportedException</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">error</span><span class="o">(</span><span class="s">"Operation not supported "</span> <span class="o">+</span> <span class="n">ex</span><span class="o">);</span>
+        <span class="o">}</span>
+
+    <span class="o">}</span>
+</code></pre></div></div>
+<p>如果在server.xml中配置了对应的GlobalNamingResources，上面的代码中的bindings就不为空。</p>
+
+<h1 id="versionloggerlistener">VersionLoggerListener</h1>
+
+<p>用于打印tomcat、操作系统以及jvm相关参数。</p>
+
+<h1 id="securitylistener">SecurityListener</h1>
+
+<p>权限相关校验，包括启动用户以及权限等。可以通过在server.xml的SecurityListener中配置checkedOsUsers来阻止某些用户启动tomcat</p>
+
+<h1 id="自定义listener">自定义Listener</h1>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">package</span> <span class="n">org</span><span class="o">.</span><span class="na">apache</span><span class="o">.</span><span class="na">catalina</span><span class="o">.</span><span class="na">core</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">org.apache.catalina.*</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.juli.logging.Log</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.juli.logging.LogFactory</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">org.apache.tomcat.util.res.StringManager</span><span class="o">;</span>
+
+
+<span class="kd">public</span> <span class="kd">class</span> <span class="nc">TestListener</span> <span class="kd">implements</span> <span class="n">LifecycleListener</span><span class="o">,</span>
+        <span class="n">ContainerListener</span> <span class="o">{</span>
+
+    <span class="kd">private</span> <span class="kd">static</span> <span class="kd">final</span> <span class="n">Log</span> <span class="n">log</span> <span class="o">=</span>
+        <span class="n">LogFactory</span><span class="o">.</span><span class="na">getLog</span><span class="o">(</span><span class="n">TestListener</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+
+    <span class="kd">private</span> <span class="kd">volatile</span> <span class="kt">boolean</span> <span class="n">serverStopping</span> <span class="o">=</span> <span class="kc">false</span><span class="o">;</span>
+
+    <span class="kd">protected</span> <span class="kd">static</span> <span class="kd">final</span> <span class="n">StringManager</span> <span class="n">sm</span> <span class="o">=</span>
+        <span class="n">StringManager</span><span class="o">.</span><span class="na">getManager</span><span class="o">(</span><span class="n">Constants</span><span class="o">.</span><span class="na">Package</span><span class="o">);</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">lifecycleEvent</span><span class="o">(</span><span class="n">LifecycleEvent</span> <span class="n">event</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="n">Lifecycle</span> <span class="n">lifecycle</span> <span class="o">=</span> <span class="n">event</span><span class="o">.</span><span class="na">getLifecycle</span><span class="o">();</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">Lifecycle</span><span class="o">.</span><span class="na">AFTER_START_EVENT</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="n">event</span><span class="o">.</span><span class="na">getType</span><span class="o">())</span> <span class="o">&amp;&amp;</span>
+                    <span class="n">lifecycle</span> <span class="k">instanceof</span> <span class="n">Server</span><span class="o">)</span> <span class="o">{</span>
+                <span class="c1">// when the server starts, we register ourself as listener for</span>
+                <span class="c1">// all context</span>
+                <span class="c1">// as well as container event listener so that we know when new</span>
+                <span class="c1">// Context are deployed</span>
+                <span class="n">Server</span> <span class="n">server</span> <span class="o">=</span> <span class="o">(</span><span class="n">Server</span><span class="o">)</span> <span class="n">lifecycle</span><span class="o">;</span>
+                <span class="n">registerListenersForServer</span><span class="o">(</span><span class="n">server</span><span class="o">);</span>
+            <span class="o">}</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">Lifecycle</span><span class="o">.</span><span class="na">BEFORE_STOP_EVENT</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="n">event</span><span class="o">.</span><span class="na">getType</span><span class="o">())</span> <span class="o">&amp;&amp;</span>
+                    <span class="n">lifecycle</span> <span class="k">instanceof</span> <span class="n">Server</span><span class="o">)</span> <span class="o">{</span>
+                <span class="c1">// Server is shutting down, so thread pools will be shut down so</span>
+                <span class="c1">// there is no need to clean the threads</span>
+                <span class="n">serverStopping</span> <span class="o">=</span> <span class="kc">true</span><span class="o">;</span>
+            <span class="o">}</span>
+
+            <span class="k">if</span> <span class="o">(</span><span class="n">Lifecycle</span><span class="o">.</span><span class="na">AFTER_STOP_EVENT</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="n">event</span><span class="o">.</span><span class="na">getType</span><span class="o">())</span> <span class="o">&amp;&amp;</span>
+                    <span class="n">lifecycle</span> <span class="k">instanceof</span> <span class="n">Context</span><span class="o">)</span> <span class="o">{</span>
+                <span class="n">log</span><span class="o">.</span><span class="na">info</span><span class="o">(</span><span class="s">"context "</span> <span class="o">+</span> <span class="o">((</span><span class="n">Context</span><span class="o">)</span> <span class="n">lifecycle</span><span class="o">).</span><span class="na">getName</span><span class="o">()</span> <span class="o">+</span> <span class="s">" stop"</span><span class="o">);</span>
+            <span class="o">}</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Exception</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">String</span> <span class="n">msg</span> <span class="o">=</span>
+                <span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span>
+                    <span class="s">"TestListener.lifecycleEvent.error"</span><span class="o">,</span>
+                    <span class="n">event</span><span class="o">);</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">error</span><span class="o">(</span><span class="n">msg</span><span class="o">,</span> <span class="n">e</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">containerEvent</span><span class="o">(</span><span class="n">ContainerEvent</span> <span class="n">event</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">try</span> <span class="o">{</span>
+            <span class="n">String</span> <span class="n">type</span> <span class="o">=</span> <span class="n">event</span><span class="o">.</span><span class="na">getType</span><span class="o">();</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">Container</span><span class="o">.</span><span class="na">ADD_CHILD_EVENT</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="n">type</span><span class="o">))</span> <span class="o">{</span>
+                <span class="n">processContainerAddChild</span><span class="o">(</span><span class="n">event</span><span class="o">.</span><span class="na">getContainer</span><span class="o">(),</span>
+                    <span class="o">(</span><span class="n">Container</span><span class="o">)</span> <span class="n">event</span><span class="o">.</span><span class="na">getData</span><span class="o">());</span>
+            <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">Container</span><span class="o">.</span><span class="na">REMOVE_CHILD_EVENT</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="n">type</span><span class="o">))</span> <span class="o">{</span>
+                <span class="n">processContainerRemoveChild</span><span class="o">(</span><span class="n">event</span><span class="o">.</span><span class="na">getContainer</span><span class="o">(),</span>
+                    <span class="o">(</span><span class="n">Container</span><span class="o">)</span> <span class="n">event</span><span class="o">.</span><span class="na">getData</span><span class="o">());</span>
+            <span class="o">}</span>
+        <span class="o">}</span> <span class="k">catch</span> <span class="o">(</span><span class="n">Exception</span> <span class="n">e</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">String</span> <span class="n">msg</span> <span class="o">=</span>
+                <span class="n">sm</span><span class="o">.</span><span class="na">getString</span><span class="o">(</span>
+                    <span class="s">"TestListener.containerEvent.error"</span><span class="o">,</span>
+                    <span class="n">event</span><span class="o">);</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">error</span><span class="o">(</span><span class="n">msg</span><span class="o">,</span> <span class="n">e</span><span class="o">);</span>
+        <span class="o">}</span>
+
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kt">void</span> <span class="nf">registerListenersForServer</span><span class="o">(</span><span class="n">Server</span> <span class="n">server</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">for</span> <span class="o">(</span><span class="n">Service</span> <span class="n">service</span> <span class="o">:</span> <span class="n">server</span><span class="o">.</span><span class="na">findServices</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">Engine</span> <span class="n">engine</span> <span class="o">=</span> <span class="n">service</span><span class="o">.</span><span class="na">getContainer</span><span class="o">();</span>
+            <span class="n">engine</span><span class="o">.</span><span class="na">addContainerListener</span><span class="o">(</span><span class="k">this</span><span class="o">);</span>
+            <span class="n">registerListenersForEngine</span><span class="o">(</span><span class="n">engine</span><span class="o">);</span>
+        <span class="o">}</span>
+
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kt">void</span> <span class="nf">registerListenersForEngine</span><span class="o">(</span><span class="n">Engine</span> <span class="n">engine</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">for</span> <span class="o">(</span><span class="n">Container</span> <span class="n">hostContainer</span> <span class="o">:</span> <span class="n">engine</span><span class="o">.</span><span class="na">findChildren</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">Host</span> <span class="n">host</span> <span class="o">=</span> <span class="o">(</span><span class="n">Host</span><span class="o">)</span> <span class="n">hostContainer</span><span class="o">;</span>
+            <span class="n">host</span><span class="o">.</span><span class="na">addContainerListener</span><span class="o">(</span><span class="k">this</span><span class="o">);</span>
+            <span class="n">registerListenersForHost</span><span class="o">(</span><span class="n">host</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kt">void</span> <span class="nf">registerListenersForHost</span><span class="o">(</span><span class="n">Host</span> <span class="n">host</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">for</span> <span class="o">(</span><span class="n">Container</span> <span class="n">contextContainer</span> <span class="o">:</span> <span class="n">host</span><span class="o">.</span><span class="na">findChildren</span><span class="o">())</span> <span class="o">{</span>
+            <span class="n">Context</span> <span class="n">context</span> <span class="o">=</span> <span class="o">(</span><span class="n">Context</span><span class="o">)</span> <span class="n">contextContainer</span><span class="o">;</span>
+            <span class="n">registerContextListener</span><span class="o">(</span><span class="n">context</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="kd">private</span> <span class="kt">void</span> <span class="nf">registerContextListener</span><span class="o">(</span><span class="n">Context</span> <span class="n">context</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">context</span><span class="o">.</span><span class="na">addLifecycleListener</span><span class="o">(</span><span class="k">this</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">processContainerAddChild</span><span class="o">(</span><span class="n">Container</span> <span class="n">parent</span><span class="o">,</span> <span class="n">Container</span> <span class="n">child</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">log</span><span class="o">.</span><span class="na">isDebugEnabled</span><span class="o">())</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">debug</span><span class="o">(</span><span class="s">"Process addChild[parent="</span> <span class="o">+</span> <span class="n">parent</span> <span class="o">+</span> <span class="s">",child="</span> <span class="o">+</span> <span class="n">child</span> <span class="o">+</span>
+                <span class="s">"]"</span><span class="o">);</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">child</span> <span class="k">instanceof</span> <span class="n">Context</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">registerContextListener</span><span class="o">((</span><span class="n">Context</span><span class="o">)</span> <span class="n">child</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">child</span> <span class="k">instanceof</span> <span class="n">Engine</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">registerListenersForEngine</span><span class="o">((</span><span class="n">Engine</span><span class="o">)</span> <span class="n">child</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">child</span> <span class="k">instanceof</span> <span class="n">Host</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">registerListenersForHost</span><span class="o">((</span><span class="n">Host</span><span class="o">)</span> <span class="n">child</span><span class="o">);</span>
+        <span class="o">}</span>
+
+    <span class="o">}</span>
+
+    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">processContainerRemoveChild</span><span class="o">(</span><span class="n">Container</span> <span class="n">parent</span><span class="o">,</span>
+        <span class="n">Container</span> <span class="n">child</span><span class="o">)</span> <span class="o">{</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">log</span><span class="o">.</span><span class="na">isDebugEnabled</span><span class="o">())</span>
+            <span class="n">log</span><span class="o">.</span><span class="na">debug</span><span class="o">(</span><span class="s">"Process removeChild[parent="</span> <span class="o">+</span> <span class="n">parent</span> <span class="o">+</span> <span class="s">",child="</span> <span class="o">+</span>
+                <span class="n">child</span> <span class="o">+</span> <span class="s">"]"</span><span class="o">);</span>
+
+        <span class="k">if</span> <span class="o">(</span><span class="n">child</span> <span class="k">instanceof</span> <span class="n">Context</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">Context</span> <span class="n">context</span> <span class="o">=</span> <span class="o">(</span><span class="n">Context</span><span class="o">)</span> <span class="n">child</span><span class="o">;</span>
+            <span class="n">context</span><span class="o">.</span><span class="na">removeLifecycleListener</span><span class="o">(</span><span class="k">this</span><span class="o">);</span>
+        <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">child</span> <span class="k">instanceof</span> <span class="n">Host</span> <span class="o">||</span> <span class="n">child</span> <span class="k">instanceof</span> <span class="n">Engine</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">child</span><span class="o">.</span><span class="na">removeContainerListener</span><span class="o">(</span><span class="k">this</span><span class="o">);</span>
+        <span class="o">}</span>
+    <span class="o">}</span>
+<span class="o">}</span>
+
+</code></pre></div></div>
+
+<p>上面的TestListener会作用于所有的Context，当Context被删除的时候打印相关日志。在server.xml中配置如下，</p>
+<div class="language-xml highlighter-rouge"><div class="highlight"><pre class="highlight"><code> <span class="nt">&lt;Listener</span> <span class="na">className=</span><span class="s">"org.apache.catalina.core.TestListener"</span> <span class="nt">/&gt;</span>
+</code></pre></div></div>
+<p>启动tomcat后删除一个context，日志会出现如下的数据，</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>信息: context /ROOT3 stop
+</code></pre></div></div>
+

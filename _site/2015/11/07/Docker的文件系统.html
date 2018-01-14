@@ -14,27 +14,24 @@
 
 <p>下面我们使用aufs文件系统来模拟一下上述的模型。首先在一个文件夹中执行如下的命令：</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 mkdir read_layer &amp;&amp; mkdir write_layer &amp;&amp; mkdir union
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>该命令会在文件夹下面生成三个子文件夹。然后在read_layer中生成一个文件，</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 cd read_layer/ &amp;&amp; echo test1 &gt; ./test
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>test文件中的内容为test1。然后修改read_layer的访问权限为只读，</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 cd .. &amp;&amp; sudo chmod -R 555 ./read_layer
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>使用ll查看当前目录可以看到read_layer的访问权限和其他文件夹不一样的。</p>
 
@@ -42,11 +39,10 @@ cd .. &amp;&amp; sudo chmod -R 555 ./read_layer
 
 <p>接下来可以将read_layer和write_layer共同挂在到union上了，</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 sudo mount -t aufs -o br=./write_layer:./read_layer none ./union
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>进入到union中我们可以看到read_layer中的文件也出现在union中了。</p>
 
@@ -54,11 +50,10 @@ sudo mount -t aufs -o br=./write_layer:./read_layer none ./union
 
 <p>进入到union中删除test文件会出现什么呢？</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 cd union/ &amp;&amp; rm -rf test
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>union中的文件不在了，但是read_layer中的还在同时在write_layer中新增了一个文件用于标示test文件被删除。</p>
 

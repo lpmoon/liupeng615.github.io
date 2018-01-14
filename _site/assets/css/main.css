@@ -65,7 +65,7 @@ body {
 
 /* post style */
 .article {
-  font-size: 17px;
+  font-size: 15px;
   color: #28323C; }
 
 .article img {
@@ -121,6 +121,9 @@ body {
 
 .navbar-custom .icon-bar {
   background-color: #28323C; }
+
+.post-content h1, h2, h3, h4, h5 {
+  color: palevioletred; }
 
 /**
  * http://github.com/mojombo/jekyll
@@ -380,3 +383,5 @@ body {
   color: #009999; }
 
 /* Literal.Number.Integer.Long */
+.post-content h1, h2, h3, h4, h5 {
+  color: palevioletred; }

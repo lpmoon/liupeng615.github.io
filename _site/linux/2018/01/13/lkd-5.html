@@ -1,0 +1,536 @@
+<ul>
+  <li><a href="#%E7%AC%AC%E4%BA%94%E7%AB%A0-%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8">第五章 系统调用</a>
+    <ul>
+      <li><a href="#%E5%92%8C%E5%86%85%E6%A0%B8%E4%BA%A4%E4%BA%92">和内核交互</a></li>
+      <li><a href="#apis-posix-and-the-c-library">APIs, POSIX, and the C Library</a>
+        <ul>
+          <li><a href="#apis">APIs</a></li>
+          <li><a href="#posix">POSIX</a></li>
+          <li><a href="#c%E5%BA%93">c库</a></li>
+        </ul>
+      </li>
+      <li><a href="#%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8">系统调用</a>
+        <ul>
+          <li><a href="#%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8%E5%8F%B7">系统调用号</a></li>
+          <li><a href="#%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8%E6%80%A7%E8%83%BD">系统调用性能</a></li>
+        </ul>
+      </li>
+      <li><a href="#%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8%E5%A4%84%E7%90%86%E5%99%A8">系统调用处理器</a>
+        <ul>
+          <li><a href="#%E6%8C%87%E5%90%91%E6%AD%A3%E7%A1%AE%E7%9A%84%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8">指向正确的系统调用</a></li>
+          <li><a href="#%E5%8F%82%E6%95%B0%E4%BC%A0%E9%80%92">参数传递</a></li>
+        </ul>
+      </li>
+      <li><a href="#%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8%E7%9A%84%E5%AE%9E%E7%8E%B0">系统调用的实现</a>
+        <ul>
+          <li><a href="#%E5%AE%9E%E7%8E%B0%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8">实现系统调用</a></li>
+          <li><a href="#%E5%8F%82%E6%95%B0%E6%A0%A1%E9%AA%8C">参数校验</a></li>
+        </ul>
+      </li>
+      <li><a href="#%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8%E4%B8%8A%E4%B8%8B%E6%96%87">系统调用上下文</a>
+        <ul>
+          <li><a href="#%E7%BB%91%E5%AE%9A%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8">绑定系统调用</a></li>
+          <li><a href="#%E5%9C%A8%E7%94%A8%E6%88%B7%E7%A9%BA%E9%97%B4%E8%B0%83%E7%94%A8%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8">在用户空间调用系统调用</a></li>
+          <li><a href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E4%B8%8D%E8%A6%81%E8%87%AA%E5%B7%B1%E5%AE%9E%E7%8E%B0%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8">为什么不要自己实现系统调用</a></li>
+        </ul>
+      </li>
+      <li><a href="#%E6%80%BB%E7%BB%93">总结</a>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<h1 id="第五章-系统调用">第五章 系统调用</h1>
+<p>在任何的现代操作系统中，都提供了一系列的接口用于运行在用户空间的进程和系统交互。这些接口用于完成下面的任务:</p>
+<ul>
+  <li>用于控制硬件</li>
+  <li>创建新的进程或者和已有的进程进行交互</li>
+  <li>请求其他资源的能力</li>
+</ul>
+
+<p>正是因为有了这些接口，以及操作系统不允许程序直接操作它们需要的资源，才使得系统稳定运行。</p>
+
+<h2 id="和内核交互">和内核交互</h2>
+<p>系统调用在用户进程和硬件之间插入了一个适配层，这个适配层用于满足下面的三个需求:</p>
+<ol>
+  <li><strong>给用户空间提供抽象的硬件接口</strong>。
+    <ul>
+      <li>比如当读写一个文件的时候，应用不需要关心磁盘类型，或者文件所在文件系统的类型</li>
+    </ul>
+  </li>
+  <li><strong>保证系统安全性和稳定性</strong>。内核充当了用户空间和系统资源之间的中间人，所以它可以基于权限，用户以及其他规则来限制来自用户空间的资源访问。
+    <ul>
+      <li>比如，内核会防止应用不正确的使用硬件，窃取其他进程的资源，以及其他对系统有害的操作</li>
+    </ul>
+  </li>
+  <li><strong>用户空间和其他系统资源之间的通用层，用于给进程提供虚拟化系统</strong>。如果系统允许进程不加限制的直接访问系统资源，那么实现多任务和虚拟内存就不太可能了。</li>
+</ol>
+
+<p>在linux系统中，除了异常和陷入(见注释)，系统调用是用户空间和内核交互的唯一方法，以及进入到内核的唯一入口。其他接口，比如设备文件和<code class="highlighter-rouge">/proc</code>，都是通过系统调用实现的。有趣的是，Linux中的系统调用的数量远比其他系统要少。</p>
+
+<blockquote>
+  <p>注释1: 陷入是一种异常，通常情况下也是一种同步的中断。陷入处理后返回的地址为陷入指令之后的指令对应的地址。陷入通常会导致系统切换到内核态，在某些情况下陷入用户进程监控或者调试。https://en.wikipedia.org/wiki/Trap_(computing)</p>
+</blockquote>
+
+<h2 id="apis-posix-and-the-c-library">APIs, POSIX, and the C Library</h2>
+
+<h3 id="apis">APIs</h3>
+<p>应用程序通常由用户空间实现的API来编写，而不是直接通过系统调用，这是因为应用所使用的API和内核实际提供的系统调用之间不需要直接的关联（见注释2）。</p>
+
+<p>API是应用所使用的一系列接口。这些接口通常是:</p>
+<ul>
+  <li>包含一个系统调用</li>
+  <li>包含多个系统调用</li>
+  <li>不包含任何系统调用</li>
+</ul>
+
+<p>同一个API在不同操作系统之间的定义是相同的，但是其内部实现可能因为操作系统不同而有很大的区别。
+下面的图展示了POSIX API，C库和系统调用之间的关系。</p>
+
+<p><img src="https://notes.shichao.io/lkd/figure_5.1.png" alt="https://notes.shichao.io/lkd/figure_5.1.png" /></p>
+
+<blockquote>
+  <p>注释2: 我认为系统调用通常是足够抽象和通用的，因为需要满足各种不同的需求，并且系统调用需要满足单一职责原则。正是因为系统调用的这种特性，所以其对应用层面的开发者不够友好。同时有一些操作需要使用到多个系统调用让直接使用系统调用开发变得困难。所以引入用户空间的API就显得十分重要了，API可以通过封装屏蔽系统调用带来的复杂度，同时可以通过聚合多个系统调用来提供更为丰富的功能。</p>
+</blockquote>
+
+<h3 id="posix">POSIX</h3>
+<p>unix系统中最通用的API都是基于POSIX的。POSIX是由一系列的IEEE标准组成，旨在为unix提供一套通用的标准。linux在实现上尽量提供POSIX和SUSv3风格的接口。</p>
+
+<h3 id="c库">c库</h3>
+
+<p>linux中的系统调用和大多数unix系统一样，大部分是通过c库提供服务的。</p>
+
+<p>C库实现了unix系统中的重要API，包括:</p>
+<ul>
+  <li>标准c库</li>
+  <li>系统调用接口</li>
+</ul>
+
+<p>c库被所有c语言程序使用，这是因为c语言的原生性，可以轻松的嵌入到其他编程语言中。c库还额外提供了多数POSIX API。</p>
+
+<p>从应用程序员的观点来看，系统调用是不需要关注的，他们需要关注的是是API。相反的，内核只关注系统调用，库函数调用哪个系统调用或者应用程序由哪些系统调用组成内核是不关注的。尽管如此，内核还是需要关注一个系统调用的使用价值，并且尽量将系统调用实现的通用简洁。</p>
+
+<p>unix接口定义的哲学是”Provide mechanism, not policy”。换句话说，unix的系统调用提供一个特定的方法，该方法适用于某一特定的抽象场景。内核不关注应用层面如何调用这些方法（系统调用）。</p>
+
+<h2 id="系统调用">系统调用</h2>
+<p>系统调用通常通过c库提供的方法访问。</p>
+
+<ul>
+  <li>系统调用可以有0个，1个或者多个参数，通常会导致一个或者多个副作用。
+    <ul>
+      <li>尽管几乎所有的系统调用都有副作用（改变系统的状态），但是还有一些系统调用比如<code class="highlighter-rouge">getpid()</code>，仅仅从内核获取一些数据</li>
+    </ul>
+  </li>
+  <li>系统调用提供一个long型（用于兼容64位架构）的返回值，表明系统调用成功或者失败:
+    <ul>
+      <li>通常情况下，一个负值代表有错误发生</li>
+      <li>通常情况下，0表示成功，尽管不都是如此</li>
+      <li>c库将错误码写入到全局的<code class="highlighter-rouge">errno</code>变量里，这个错误码可以通过<code class="highlighter-rouge">perror()</code>转化为人可读的错误。</li>
+    </ul>
+  </li>
+  <li>系统调用有特定的行为（预定义好的）</li>
+</ul>
+
+<p>系统调用<code class="highlighter-rouge">getpid()</code>用于返回当前进程的pid。该方法在内核中的实现十分简单：</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">SYSCALL_DEFINE0</span><span class="p">(</span><span class="n">getpid</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="k">return</span> <span class="n">task_tgid_vnr</span><span class="p">(</span><span class="n">current</span><span class="p">);</span> <span class="c1">// returns current-&gt;tgid</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>系统调用的定义里没有关于如何实现的细节。内核在实现系统调用的时候必须让系统调用满足特定的需求，但是如何实现内核是不关注的，只要最终的结果正确即可。</p>
+
+<p><code class="highlighter-rouge">SYSCALL_DEFINE0</code> 是一个简单的宏，用于定义没有参数的系统调用。上面例子中的系统调用展开后为下面的代码</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">asmlinkage</span> <span class="kt">long</span> <span class="n">sys_getpid</span><span class="p">(</span><span class="kt">void</span><span class="p">);</span>
+</code></pre></div></div>
+<ul>
+  <li><code class="highlighter-rouge">asmlinkage</code>修饰符用于告诉编译器只在栈寻找方法的参数（见注释3）。这个是每个系统调用都需要的修饰符。</li>
+</ul>
+
+<p>这个方法返回了一个long类型的数据。为了兼容32和64位操作系统，系统调用从内核返回到用户空间的时候返回一个long类型的数据。所有系统调用的命名规则是: 如果系统调用为bar()，那么在内核中对应的函数是sys_bar()。</p>
+
+<blockquote>
+  <p>注释3：
+https://www.quora.com/Linux-Kernel-What-does-asmlinkage-mean-in-the-definition-of-system-calls
+例如当系统调用int sethostname(char *name, size_t len)的时候，对应的汇编代码大概为
+mov ecx, len     ; amount of bytes in name
+mov ebx, name ; address of name string
+mov	eax, 170    ; syscall number (sys_sethostname)
+int 0x80            ; x86 call the kernel – sysenter is another entry point
+其中int 0x80是一个软中断，用于进入到内核中执行system_call()。该方法会将eax, ebx, ecx等寄存器存放到进程栈上，然后继续调用实际的系统调用。由于参数都已经存放在栈上了，所以需要asmlinkage告诉编译器从栈上取参数</p>
+</blockquote>
+
+<h3 id="系统调用号">系统调用号</h3>
+
+<p>在Linux中，每个系统调用都分配了一个唯一的系统调用号用来索引系统调用。当用户空间进程执行系统调用的时候，系统调用号来指定哪个系统调用应该被执行。进程不通过系统调用的名称来调用系统调用。</p>
+
+<ul>
+  <li>一旦系统调用号和系统调用绑定就不可以更改了。否则哪些已经编译好的程序会无法正常使用。</li>
+  <li>如果一个系统调用被移除了，它对应的系统调用号也不可以回收利用，否则之前编译好的代码在运行的时候可能无法按照预期调用某个系统调用，而会调用一个错误的系统调用。</li>
+  <li>linux提供了一个叫做”note implemented”的系统调用，sys_ni_syscall()，该系统调用除了返回ENOSYS其他事情都不会做，如果遇到了无效的系统调用时该系统调用会作为异常处理。当某个系统调用被移除或者无效的时候，这个方法会作为”plug the hole”（其实就是默认处理器）。</li>
+</ul>
+
+<p>内核有一份列表存储了在系统注册过的系统调用，该表为于<code class="highlighter-rouge">sys_call_table</code>，在x86-64系统中定义在<a href="https://github.com/shichao-an/linux/blob/v2.6.34/arch/x86/kernel/syscall_64.c">arch/x86/kernel/syscall_64.c</a>。</p>
+
+<p>所有的系统调用号定义在<a href="https://github.com/shichao-an/linux/blob/v2.6.34/include/asm-generic/unistd.h">include/asm-generic/unistd.</a>。</p>
+
+<h3 id="系统调用性能">系统调用性能</h3>
+
+<p>系统调用在linux中执行的速度要快于其他很多系统，因为</p>
+<ul>
+  <li>linux上下文切换的速度很快: 进入内核和退出内核都经过优化，相对简单</li>
+  <li>系统调用处理器和系统调用本身都很简洁</li>
+</ul>
+
+<h2 id="系统调用处理器">系统调用处理器</h2>
+
+<p>用户空间的应用无法直接执行内核代码。他们无法直接通过简单的方法调用来执行内核中的方法因为内核处于受保护的内存中。否则，系统的安全性和稳定性将不复存在。</p>
+
+<p>用户空间的程序通知内核他们想执行系统调用，并且将系统切换到内核态，这时候系统调用可以在内核态执行。这种机制是通过软中断完成的: 产生一个异常，然后系统切换到内核态，执行异常处理。在这种情况下对应的异常处理就是系统调用处理器。</p>
+
+<p>在x86系统上，定义好的软中断号是128，通过指令<code class="highlighter-rouge">int 0x80</code>触发。它会将系统切换到内核态，同时执行异常表中的128，对应的是系统调用处理器。系统调用处理器对应的方法是s<code class="highlighter-rouge">system_call()</code>。这个方法的实现和体系结构密切相关，在x86-64系统上它的实现位于<code class="highlighter-rouge">entry_64.s</code>中。（<a href="https://github.com/shichao-an/linux/blob/v2.6.34/arch/x86/kernel/entry_64.S">arch/x86/kernel/entry_64.S</a>）。</p>
+
+<p>最近，x86处理器添加了一个叫做<strong>sysenter</strong>的特性，相比于使用int中断指令该特性提供了一个更快的陷入内核的方法。内核很快添加了对该特性的支持。不管系统调用处理器是如何被调用的，用户态需要通过异常或者陷入进入到内核。</p>
+
+<h3 id="指向正确的系统调用">指向正确的系统调用</h3>
+
+<p>linux系统调用的更多细节参见<a href="https://notes.shichao.io/asm/#interfacing-with-linux-system-calls">Interfacing with Linux</a>。</p>
+
+<p>只进入到内核空间是不够的: 系统调用号必须也传入到内核中。</p>
+
+<p>在x86系统中，系统调用号通过寄存器eax传入到内核中:</p>
+<ul>
+  <li>在陷入内核之前，用户空间将系统调用好放到eax中用于调用对应的系统调用</li>
+  <li>系统调用处理器会从eax读取系统调用号</li>
+</ul>
+
+<p>方法<code class="highlighter-rouge">system_call()</code>通过将系统调用号和<code class="highlighter-rouge">NR_syscalls</code>进行比较来检查其合法性。如果大于或者等于<code class="highlighter-rouge">NR_syscalls</code>，方法会返回<code class="highlighter-rouge">-ENOSYS</code>。否则对应的系统调用会被调用:<a href="https://github.com/shichao-an/linux/blob/v2.6.34/arch/x86/kernel/entry_64.S#L487">arch/x86/kernel/entry_64.S#L487</a></p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">call</span> <span class="o">*</span><span class="n">sys_call_table</span><span class="p">(,</span><span class="o">%</span><span class="n">rax</span><span class="p">,</span><span class="mi">8</span><span class="p">)</span>
+</code></pre></div></div>
+<p>因为系统调用表中的每一个项都是64bits的，内核将系统调用号乘以8，然后将得到的值作为索引在系统调用表中查找对应的系统调用。在x86-32位系统上，代码类似，不过8被替换成了4。</p>
+
+<p><img src="https://notes.shichao.io/lkd/figure_5.2.png" alt="https://notes.shichao.io/lkd/figure_5.2.png" /></p>
+
+<h3 id="参数传递">参数传递</h3>
+
+<p>除了系统调用号之外，多数的系统调用还需要一个或者多个参数传递到内核。在陷入的时候，用户空间必须将对应的参数传递到内核中。最早的传递方法和传递系统调用号类似: 参数存放到寄存中。在x86-32系统上，这些寄存器包括ebx, ecx, edx, esi和edi，依次存放前五个参数。如果有6个或者更多参数，一个寄存器用来存放一个指针，该指针指向存放在用户空间的所有参数所在的地址。</p>
+
+<p>返回到用户空间的值同样也存放在寄存器中。在x86中，返回值存放在eax寄存器。</p>
+
+<h2 id="系统调用的实现">系统调用的实现</h2>
+
+<p>系统调用的实现不需要关注系统调用处理器的实际行为（意思应该是两者实现上解耦）。因此，在Linux添加一个新的系统调用是十分简单的。最复杂的工作集中在设计和实现系统调用；在内核中注册已经实现好的系统调用是很简单的。</p>
+
+<h3 id="实现系统调用">实现系统调用</h3>
+
+<p>实现系统调用的第一步是设计系统调用的目标，系统调用必须只包含一个目标（单一职责原则）。多语义（通过一个参数控制做不同的事情）的系统调用在linux上不被鼓励的。<code class="highlighter-rouge">ioctl()</code>是一个例子用来告诉我们什么不应该做。</p>
+
+<p>考虑系统调用的参数，返回值和异常码。系统调用必须拥有尽可能少数量的参数，同时必须是清晰的简洁的。系统调用的语义和行为是很重要的；它们不能改变，因为已经存在的应用强依赖系统调用现有的语义。许多系统调用提供flag参数用于向前兼容。这个标志不是用来在一个系统调用中提供多语义，而是在不破坏向后兼容性的前提下用来开启新的功能。</p>
+
+<p>设计一个系统调用需要着眼于未来。系统调用的作用必须保持稳定，但是使用它的地方可能发生改变。记住unix的哲学: “Provide mechanism, not policy.”。</p>
+
+<p>当你编写一个系统调用的时候，你需要从未来的角度考虑到可移植性和鲁棒性。unix系统中的系统调用已经经历了时间的考验；他们中的大多数在30年前已经出现，并且在今天看来依然十分适用。</p>
+
+<h3 id="参数校验">参数校验</h3>
+
+<p>系统调用必须仔细的验证它们的参数，确保它们的合法性，这样才能保证系统的安全和稳定。</p>
+
+<p>一个最主要的检查点是用户提供指针的校验。通过指针定位到用户空间之前，系统必须保证:</p>
+<ul>
+  <li>指针指向了用户空间的内存区域。进程不能欺骗系统读取内核的数据。</li>
+  <li>指针指向了进程的地址空间中的内存区域。进程不能欺骗系统读取其他进程的数据。</li>
+  <li>进程不能够绕过内存权限控制。如果需要读取内存，这些内存必须是被标记可读的。如果需要写入内存，这些内存必须是被标记可写的。如果是运行代码，那么内存必须标记为可运行的。</li>
+</ul>
+
+<p>内核提供了两个方法用来满足上面的校验，并且可以将内存从用户空间拷贝到内核空间或者从内核空间拷贝到用户空间。注意内核代码不能盲目的从用户空间获取数据。必须采用下面提供的两个方法中的一个。</p>
+<ul>
+  <li><code class="highlighter-rouge">copy_to_user()</code>用来写入用户空间。这方法有三个参数:
+    <ul>
+      <li>第一个参数是进程地址空间中的写入目标地址</li>
+      <li>第二个参数是写入数据在内核空间的源地址</li>
+      <li>第三个参数是写入数据的大小</li>
+    </ul>
+  </li>
+  <li><code class="highlighter-rouge">copy_from_user()</code>用来从用户空间读取数据。和<code class="highlighter-rouge">copy_to_user()</code>类似。函数从第二个参数所指向的地址读取数据然后拷贝到第一个参数指向的地址，拷贝的大小为第三个参数。</li>
+</ul>
+
+<p>这两个方法都会返回没有成功读取的字节数。如果成功，则返回0；在失败的时候通常会返回<code class="highlighter-rouge">-EFAULT</code>。</p>
+
+<p>下面的例子<code class="highlighter-rouge">silly_copy()</code>使用了上面的两个方法<code class="highlighter-rouge">copy_from_user()</code>和<code class="highlighter-rouge">copy_to_user()</code>。它从第一个参数对应的地址拷贝数据到第二个参数对应的地址。这个方法虽然可以正常执行，但是却不是最优的，因为将数据拷贝到内核是没有意义的。虽然如此，它仍能帮助我们理解上面的两个方法:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/*
+* silly_copy - pointless syscall that copies the len bytes from
+* ‘src’ to ‘dst’ using the kernel as an intermediary in the copy.
+* Intended as an example of copying to and from the kernel.
+*/</span>
+<span class="n">SYSCALL_DEFINE3</span><span class="p">(</span><span class="n">silly_copy</span><span class="p">,</span>
+                <span class="kt">unsigned</span> <span class="kt">long</span> <span class="o">*</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span>
+                <span class="kt">unsigned</span> <span class="kt">long</span> <span class="o">*</span><span class="p">,</span> <span class="n">dst</span><span class="p">,</span>
+                <span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">len</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">buf</span><span class="p">;</span>
+
+    <span class="cm">/* copy src, which is in the user’s address space, into buf */</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">copy_from_user</span><span class="p">(</span><span class="o">&amp;</span><span class="n">buf</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">len</span><span class="p">))</span>
+        <span class="k">return</span> <span class="o">-</span><span class="n">EFAULT</span><span class="p">;</span>
+
+    <span class="cm">/* copy buf into dst, which is in the user’s address space */</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">copy_to_user</span><span class="p">(</span><span class="n">dst</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">buf</span><span class="p">,</span> <span class="n">len</span><span class="p">))</span>
+        <span class="k">return</span> <span class="o">-</span><span class="n">EFAULT</span><span class="p">;</span>
+
+    <span class="cm">/* return amount of data copied */</span>
+    <span class="k">return</span> <span class="n">len</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<p>这两个方法都可能会阻塞。比如，当请求的业不在物理内存而是被交换到磁盘的时候，阻塞有可能发生。在这种情况下，进程会阻塞直到页错误处理将对应的内存从磁盘读取到物理内存。</p>
+
+<p>最后的可能检查是权限检查。在老版本的linux系统中，调用系统调用需要使用<code class="highlighter-rouge">suser()</code>获取root权限。这个方法检查当前用户是否是root用户；现在这个机制已经被移除了，并且添加了更好的机制。</p>
+
+<p>新系统引入了机制用来检查特定资源的权限。<code class="highlighter-rouge">capable()</code>接受一个权限检查标志，如果调用者有权限则返回非0否则返回0。比如，<code class="highlighter-rouge">capable(CAP_SYS_NICE)</code>检查调用者是否有权限修改别的进程的nice值。默认情况下，超级用户拥有所有权限，而非超级用户什么权限都没有。</p>
+
+<p>下面的例子是系统调用<code class="highlighter-rouge">reboot()</code>。可以看到它的第一步是保证调用者有<code class="highlighter-rouge">CAP_SYS_REBOOT</code>权限。如果这个判断条件被移除了，任何进程都可以重启系统了。
+<a href="https://github.com/shichao-an/linux/blob/v2.6.34/kernel/sys.c#L368">kernel/sys.c#L368</a></p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">SYSCALL_DEFINE4</span><span class="p">(</span><span class="n">reboot</span><span class="p">,</span> <span class="kt">int</span><span class="p">,</span> <span class="n">magic1</span><span class="p">,</span> <span class="kt">int</span><span class="p">,</span> <span class="n">magic2</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="kt">int</span><span class="p">,</span> <span class="n">cmd</span><span class="p">,</span>
+        <span class="kt">void</span> <span class="n">__user</span> <span class="o">*</span><span class="p">,</span> <span class="n">arg</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="kt">char</span> <span class="n">buffer</span><span class="p">[</span><span class="mi">256</span><span class="p">];</span>
+    <span class="kt">int</span> <span class="n">ret</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+
+    <span class="cm">/* We only trust the superuser with rebooting the system. */</span>
+    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">capable</span><span class="p">(</span><span class="n">CAP_SYS_BOOT</span><span class="p">))</span>
+        <span class="k">return</span> <span class="o">-</span><span class="n">EPERM</span><span class="p">;</span>
+
+    <span class="cm">/* For safety, we require "magic" arguments. */</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">magic1</span> <span class="o">!=</span> <span class="n">LINUX_REBOOT_MAGIC1</span> <span class="o">||</span>
+        <span class="p">(</span><span class="n">magic2</span> <span class="o">!=</span> <span class="n">LINUX_REBOOT_MAGIC2</span> <span class="o">&amp;&amp;</span>
+                    <span class="n">magic2</span> <span class="o">!=</span> <span class="n">LINUX_REBOOT_MAGIC2A</span> <span class="o">&amp;&amp;</span>
+            <span class="n">magic2</span> <span class="o">!=</span> <span class="n">LINUX_REBOOT_MAGIC2B</span> <span class="o">&amp;&amp;</span>
+                    <span class="n">magic2</span> <span class="o">!=</span> <span class="n">LINUX_REBOOT_MAGIC2C</span><span class="p">))</span>
+        <span class="k">return</span> <span class="o">-</span><span class="n">EINVAL</span><span class="p">;</span>
+
+    <span class="cm">/* Instead of trying to make the power_off code look like
+     * halt when pm_power_off is not set do it the easy way.
+     */</span>
+    <span class="k">if</span> <span class="p">((</span><span class="n">cmd</span> <span class="o">==</span> <span class="n">LINUX_REBOOT_CMD_POWER_OFF</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">pm_power_off</span><span class="p">)</span>
+        <span class="n">cmd</span> <span class="o">=</span> <span class="n">LINUX_REBOOT_CMD_HALT</span><span class="p">;</span>
+
+    <span class="n">mutex_lock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">reboot_mutex</span><span class="p">);</span>
+    <span class="k">switch</span> <span class="p">(</span><span class="n">cmd</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">case</span> <span class="n">LINUX_REBOOT_CMD_RESTART</span><span class="p">:</span>
+        <span class="n">kernel_restart</span><span class="p">(</span><span class="nb">NULL</span><span class="p">);</span>
+        <span class="k">break</span><span class="p">;</span>
+
+    <span class="k">case</span> <span class="n">LINUX_REBOOT_CMD_CAD_ON</span><span class="p">:</span>
+        <span class="n">C_A_D</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+        <span class="k">break</span><span class="p">;</span>
+
+    <span class="k">case</span> <span class="n">LINUX_REBOOT_CMD_CAD_OFF</span><span class="p">:</span>
+        <span class="n">C_A_D</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+        <span class="k">break</span><span class="p">;</span>
+
+    <span class="k">case</span> <span class="n">LINUX_REBOOT_CMD_HALT</span><span class="p">:</span>
+        <span class="n">kernel_halt</span><span class="p">();</span>
+        <span class="n">do_exit</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+        <span class="n">panic</span><span class="p">(</span><span class="s">"cannot halt"</span><span class="p">);</span>
+
+    <span class="k">case</span> <span class="n">LINUX_REBOOT_CMD_POWER_OFF</span><span class="p">:</span>
+        <span class="n">kernel_power_off</span><span class="p">();</span>
+        <span class="n">do_exit</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span>
+        <span class="k">break</span><span class="p">;</span>
+
+    <span class="k">case</span> <span class="n">LINUX_REBOOT_CMD_RESTART2</span><span class="p">:</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">strncpy_from_user</span><span class="p">(</span><span class="o">&amp;</span><span class="n">buffer</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">arg</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">buffer</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+            <span class="n">ret</span> <span class="o">=</span> <span class="o">-</span><span class="n">EFAULT</span><span class="p">;</span>
+            <span class="k">break</span><span class="p">;</span>
+        <span class="p">}</span>
+        <span class="n">buffer</span><span class="p">[</span><span class="k">sizeof</span><span class="p">(</span><span class="n">buffer</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="sc">'\0'</span><span class="p">;</span>
+
+        <span class="n">kernel_restart</span><span class="p">(</span><span class="n">buffer</span><span class="p">);</span>
+        <span class="k">break</span><span class="p">;</span>
+
+<span class="cp">#ifdef CONFIG_KEXEC
+</span>    <span class="k">case</span> <span class="n">LINUX_REBOOT_CMD_KEXEC</span><span class="p">:</span>
+        <span class="n">ret</span> <span class="o">=</span> <span class="n">kernel_kexec</span><span class="p">();</span>
+        <span class="k">break</span><span class="p">;</span>
+<span class="cp">#endif
+</span>
+<span class="cp">#ifdef CONFIG_HIBERNATION
+</span>    <span class="k">case</span> <span class="n">LINUX_REBOOT_CMD_SW_SUSPEND</span><span class="p">:</span>
+        <span class="n">ret</span> <span class="o">=</span> <span class="n">hibernate</span><span class="p">();</span>
+        <span class="k">break</span><span class="p">;</span>
+<span class="cp">#endif
+</span>
+    <span class="k">default</span><span class="o">:</span>
+        <span class="n">ret</span> <span class="o">=</span> <span class="o">-</span><span class="n">EINVAL</span><span class="p">;</span>
+        <span class="k">break</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="n">mutex_unlock</span><span class="p">(</span><span class="o">&amp;</span><span class="n">reboot_mutex</span><span class="p">);</span>
+    <span class="k">return</span> <span class="n">ret</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+
+<h2 id="系统调用上下文">系统调用上下文</h2>
+
+<p>在执行系统调用的时候，内核处于进程的上下文中。”当前指针”指向当前触发系统调用的进程。</p>
+
+<p>在进程的上下文中，内核可以睡眠可以被抢占。下面的两个观点是很重要的:</p>
+<ul>
+  <li>可以睡眠代表系统调用可以使用内核的大部分功能。
+    <ul>
+      <li>这个功能大大的简化了系统调用的开发难度</li>
+      <li>中断处理是不能够睡眠的，这大大的限制了中断处理所能够做的事情，相比之下系统调用可以在进程空间做很多事情。</li>
+    </ul>
+  </li>
+  <li>系统调用是可以被强占的。
+    <ul>
+      <li>新的任务可能会执行同样的系统调用，所以系统调用必须要是可重入的。</li>
+    </ul>
+  </li>
+</ul>
+
+<p>当系统调用返回的时候，进程切换回用户空间继续执行刚才的代码。</p>
+
+<h3 id="绑定系统调用">绑定系统调用</h3>
+
+<p>注册一个已经编写好的系统调用的步骤是琐碎的:</p>
+<ul>
+  <li>在系统调用表的结尾添加一个新的项。在支持系统调用的每一个体系结构上都需要执行这个操作。系统调用表的index从0开始，每个index表示一个系统调用号。</li>
+  <li>在每个支持系统调用的体系结构中，系统调用号都存放在<code class="highlighter-rouge">&lt;asm/unistd.h&gt;</code>中。</li>
+  <li>将系统调用编译到内核镜像中（而不是编译成一个模块）。只需要简单的将系统调用放到<code class="highlighter-rouge">kernel/</code>目录下的关联文件中，比如<code class="highlighter-rouge">sys.c</code>，<code class="highlighter-rouge">sys.c</code>中存放了各种各样的系统调用。</li>
+</ul>
+
+<p>以一个虚构的系统调用<code class="highlighter-rouge">foo()</code>为例。我们希望将<code class="highlighter-rouge">sys_foo()</code>添加到系统调用表中。对于多数的体系结构而言，系统调用表位于<code class="highlighter-rouge">entry.S</code>中，该文件和下面的内容类似:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">ENTRY</span><span class="p">(</span><span class="n">sys_call_table</span><span class="p">)</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_restart_syscall</span> <span class="cm">/* 0 */</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_exit</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_fork</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_read</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_write</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_open</span> <span class="cm">/* 5 */</span>
+<span class="p">...</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_eventfd2</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_epoll_create1</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_dup3</span> <span class="cm">/* 330 */</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_pipe2</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_inotify_init1</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_preadv</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_pwritev</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_rt_tgsigqueueinfo</span> <span class="cm">/* 335 */</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_perf_event_open</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_recvmmsg</span>
+<span class="p">.</span><span class="kt">long</span> <span class="n">sys_foo</span>
+</code></pre></div></div>
+<p>尽管没有明确的指出该系统调用对应的系统调用号，但是我们还是可以很容易的看出对应的系统调用号是338。</p>
+<ul>
+  <li>对于每个你想支持的体系结构，系统调用都需要被添加到对应的系统调用表中。</li>
+  <li>每个体系结构中该系统调用对应的系统调用号可以不同，因为系统调用号是体系结构特有的部分。</li>
+  <li>通常情况下，你应该在每个体系结构中都支持该系统调用。</li>
+  <li>根据约定需要每隔五个项添加一个数字，方便于查找系统对应的系统调用号是多少。</li>
+</ul>
+
+<p>接下来系统调用号被添加到了<code class="highlighter-rouge">&lt;asm/unistd.h&gt;</code>中，像下面这样:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cm">/*
+* This file contains the system call numbers.
+*/</span>
+<span class="cp">#define __NR_restart_syscall 0
+#define __NR_exit 1
+#define __NR_fork 2
+#define __NR_read 3
+#define __NR_write 4
+#define __NR_open 5
+</span><span class="p">...</span>
+<span class="cp">#define __NR_signalfd4 327
+#define __NR_eventfd2 328
+#define __NR_epoll_create1 329
+#define __NR_dup3 330
+#define __NR_pipe2 331
+#define __NR_inotify_init1 332
+#define __NR_preadv 333
+#define __NR_pwritev 334
+#define __NR_rt_tgsigqueueinfo 335
+#define __NR_perf_event_open 336
+#define __NR_recvmmsg 337
+#define __NR_foo
+</span></code></pre></div></div>
+
+<p>最后就是系统调用<code class="highlighter-rouge">foo()</code>的实现了。因为系统调用必须被编译进内核镜像中，所以在这个例子中我们将其定义到<code class="highlighter-rouge">kernel/sys.c</code>中。你应该将系统调用放到关联性最强的地方；例如如果系统调用和调度相关，它们应该被定义在<code class="highlighter-rouge">kernel/sched.c中</code>中。</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#include &lt;asm/page.h&gt;
+</span>
+<span class="cm">/*
+* sys_foo – everyone’s favorite system call.
+*
+* Returns the size of the per-process kernel stack.
+*/</span>
+<span class="n">asmlinkage</span> <span class="kt">long</span> <span class="nf">sys_foo</span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="k">return</span> <span class="n">THREAD_SIZE</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>启动内核，用户空间就可以调用<code class="highlighter-rouge">foo()</code>这个系统调用了。</p>
+
+<h3 id="在用户空间调用系统调用">在用户空间调用系统调用</h3>
+
+<p>C库提供了对系统调用的支持。应用程序可以引入标准头，然后链接到c库来使用你的系统调用。</p>
+
+<p>linux提供了一系列的宏来访问系统调用。这些宏用于设置寄存器内容，然后调用陷入指令。这些宏命名为<code class="highlighter-rouge">_syscalln()</code>，n位于0到6之间。这个n用于表示传入到系统调用的参数数量，因为宏需要知道有几个参数需要被设置到寄存器上。</p>
+
+<p>例如，系统调用<code class="highlighter-rouge">open()</code>，有如下的定义:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">long</span> <span class="n">open</span><span class="p">(</span><span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="n">filename</span><span class="p">,</span> <span class="kt">int</span> <span class="n">flags</span><span class="p">,</span> <span class="kt">int</span> <span class="n">mode</span><span class="p">)</span>
+</code></pre></div></div>
+<p>在没有显示的库支持的情况下，系统调用宏可以这样使用系统调用:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#define __NR_open 5
+</span><span class="n">_syscall3</span><span class="p">(</span><span class="kt">long</span><span class="p">,</span> <span class="n">open</span><span class="p">,</span> <span class="k">const</span> <span class="kt">char</span> <span class="o">*</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="kt">int</span><span class="p">,</span> <span class="n">flags</span><span class="p">,</span> <span class="kt">int</span><span class="p">,</span> <span class="n">mode</span><span class="p">)</span>
+</code></pre></div></div>
+<p>应用程序可以简单的调用<code class="highlighter-rouge">open()</code>方法。</p>
+
+<p>一个宏有2+2*n个参数:</p>
+<ul>
+  <li>第一个参数对应系统调用的返回值类型</li>
+  <li>第二个参数对应系统调用的名称</li>
+  <li>其他的则是各个参数的类型和名称，需要注意的这些参数的顺序和系统调用严格一致</li>
+</ul>
+
+<p><code class="highlighter-rouge">__NR_open</code>(<a href="https://github.com/shichao-an/linux/blob/v2.6.34/arch/x86/include/asm/unistd_64.h#L19">arch/x86/include/asm/unistd_64.h#L19</a>)定义在```&lt;asm/unistd.h&gt;中。对应的是系统调用号。</p>
+
+<p>通过汇编内联的方式，<code class="highlighter-rouge">_syscall3</code>可以扩展到c函数中。这段汇编主要用于将系统调用号和参数放到对应的寄存器中，并且调用陷入指令进入到内核中。如果需要调用系统调用<code class="highlighter-rouge">open()</code>，只需要将上面的宏放到应用的对应位置即可。</p>
+
+<p>比如我们要调用之前定义的系统调用<code class="highlighter-rouge">foo()</code>，我们需要这么做:</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#define __NR_foo 283
+</span><span class="n">__syscall0</span><span class="p">(</span><span class="kt">long</span><span class="p">,</span> <span class="n">foo</span><span class="p">)</span>
+
+<span class="kt">int</span> <span class="n">main</span> <span class="p">()</span>
+<span class="p">{</span>
+    <span class="kt">long</span> <span class="n">stack_size</span><span class="p">;</span>
+    <span class="n">stack_size</span> <span class="o">=</span> <span class="n">foo</span> <span class="p">();</span>
+    <span class="n">printf</span> <span class="p">(</span><span class="s">"The kernel stack size is %ld</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">stack_size</span><span class="p">);</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+
+</code></pre></div></div>
+
+<h3 id="为什么不要自己实现系统调用">为什么不要自己实现系统调用</h3>
+
+<p>不鼓励添加自行添加新的系统调用，如果非要添加你需要格外小心谨慎。</p>
+
+<p>下面是将一个新接口实现为系统调用的支持和反对观点：</p>
+
+<p>支持:</p>
+<ul>
+  <li>系统调用易于实现并且使用简单</li>
+  <li>在Linux上系统调用的性能不错</li>
+</ul>
+
+<p>反对:</p>
+<ul>
+  <li>你需要官方分配一个系统调用号给你</li>
+  <li>一旦系统调用进入到稳定的内核版本中，它就不可以再改变了。否则会似的很多应用无法执行。</li>
+  <li>系统调用无法被脚本调用，并且不能在文件系统中直接调用</li>
+  <li>因为你需要一个进程调度号，掌控和使用一个非主流的内核分支是十分困难的</li>
+  <li>对于简单的信息交换，系统调用太重了</li>
+</ul>
+
+<h2 id="总结">总结</h2>
+

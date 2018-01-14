@@ -1,0 +1,591 @@
+<!-- TOC -->
+
+<ul>
+  <li><a href="#第三章-进程管理">第三章 进程管理</a>
+    <ul>
+      <li><a href="#进程">进程</a>
+        <ul>
+          <li><a href="#执行线程">执行线程</a></li>
+          <li><a href="#虚拟化处理器和虚拟内存">虚拟化处理器和虚拟内存</a></li>
+          <li><a href="#进程的生命周期">进程的生命周期</a></li>
+          <li><a href="#fork-exec-exit-和-wait">fork, exec, exit 和 wait</a></li>
+        </ul>
+      </li>
+      <li><a href="#进程描述符和进程结构">进程描述符和进程结构</a>
+        <ul>
+          <li><a href="#文件描述符的存储">文件描述符的存储</a></li>
+          <li><a href="#进程状态">进程状态</a></li>
+          <li><a href="#操作进程状态">操作进程状态</a></li>
+          <li><a href="#进程上下文">进程上下文</a></li>
+          <li><a href="#进程树the-process-family-tree">进程树(The process family tree)</a></li>
+        </ul>
+      </li>
+      <li><a href="#进程创建">进程创建</a>
+        <ul>
+          <li><a href="#copy-on-write">Copy-on-Write</a></li>
+          <li><a href="#forking">Forking</a></li>
+          <li><a href="#vfork">vfork()</a></li>
+        </ul>
+      </li>
+      <li><a href="#linux线程的实现">linux线程的实现</a>
+        <ul>
+          <li><a href="#创建线程">创建线程</a></li>
+          <li><a href="#内核线程">内核线程</a></li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<!-- /TOC -->
+<h1 id="第三章-进程管理">第三章 进程管理</h1>
+<p>该章节主要介绍进程的相关内容。进程管理是任何操作系统的重要部分，当然也包括linux。</p>
+
+<h2 id="进程">进程</h2>
+<p>进程在本质上就是一段程序。除了执行的代码，进程还包括一系列的资源:</p>
+<ul>
+  <li>打开的文件</li>
+  <li>等待的信号</li>
+  <li>内核数据</li>
+  <li>处理器状态</li>
+  <li>有一个或者多个内存映射的内存地址空间</li>
+  <li>线程</li>
+  <li>包含多个全局变量的数据区</li>
+</ul>
+
+<h3 id="执行线程">执行线程</h3>
+<p>执行线程简称线程，是进程内部的活动实体。
+每个线程包括:</p>
+<ul>
+  <li>程序计数器</li>
+  <li>线程栈</li>
+  <li>一系列处理器寄存器
+内核调度的实体是线程，而不是进程。linux不区分进程和线程，对于linux来说，线程仅仅是一个特殊的进程。</li>
+</ul>
+
+<h3 id="虚拟化处理器和虚拟内存">虚拟化处理器和虚拟内存</h3>
+<p>在现代操作系统中，进程提供了两类虚拟化:虚拟化处理器和虚拟内存。</p>
+<ul>
+  <li>虚拟处理器使得进程产生独占系统的幻觉，尽管可能和其他数百个进程共享处理器。</li>
+  <li>虚拟内存使得进程在分配和管理内存的时候觉得自己拥有系统的全部内存。</li>
+</ul>
+
+<p>线程共享虚拟内存抽象，然而每个线程拥有自己的虚拟处理器。</p>
+
+<h3 id="进程的生命周期">进程的生命周期</h3>
+<p>一个进程是一段活跃的程序和相应资源的合体:</p>
+<ul>
+  <li>多个进程可以执行相同的程序</li>
+  <li>多个进程可以共享资源，比如打开的文件和地址空间</li>
+</ul>
+
+<h3 id="fork-exec-exit-和-wait">fork, exec, exit 和 wait</h3>
+<p>在linux系统中，系统调用fork()通过复制一个现有的进程而创建一个新的进程。</p>
+<ul>
+  <li>调用fork()的进程是父进程，新创建的进程是子进程。</li>
+  <li>父进程恢复运行，并且子进程在同一个地方开始执行: fork()返回的地方。</li>
+  <li>系统调用fork()从内核中返回两次，一个是从父进程，一个是从子进程。</li>
+</ul>
+
+<p>系统调用exec()创建新的地址空间，并且在fork之后装载新的程序到子进程中。在当代linux内核中，fork()实际上是通过系统调用clone()实现的，clone()会在下一节中讨论。</p>
+
+<p>系统调用exit()终止当前进程并且释放其资源。父进程可以通过wait4()获取被终止的进程的状态。一个进程可以等待另一个进程的终止。当一个进程终止的时候，进程的状态会变为”僵尸”状态，该状态表示进程已经被终止，这个状态会保持知道父进程调用wait()或者waitpid()。内核实现了系统调用wait4()。linux系统通过c库提供了wait()，waitpid()，wait3()和wait4()函数。</p>
+
+<h2 id="进程描述符和进程结构">进程描述符和进程结构</h2>
+<p>进程还有另外一个名字叫任务。linux内核将进程泛指为任务。在这本书中，进程和任务这两个概念可以交换使用，尽管在内核的观点下任务通常指进程。
+内核将进程存储在一个环形的双向链表中。
+进程的描述符<code class="highlighter-rouge">struct task_struct(定义在&lt;linux/sched.h&gt;)</code>是任务列表中的一个元素。它包含了一个进程的所有信息。</p>
+
+<p><code class="highlighter-rouge">task_struct</code>是一个比较大的数据结构，在32位的机器上大概占用1.7KB。进程描述符包含了描述运行程序的数据: 打开的文件，进程地址空间，等待的信号，进程状态等等。</p>
+
+<p><img src="https://notes.shichao.io/lkd/figure_3.1.png" alt="https://notes.shichao.io/lkd/figure_3.1.png" /></p>
+
+<h3 id="分配进程描述符">分配进程描述符</h3>
+<p><code class="highlighter-rouge">task_struct</code>是通过slab allocator分配的，这样做的好处是对象重用。结构<code class="highlighter-rouge">struct thread_info</code>进程栈的底部（栈是从高位开始朝地位增长）。</p>
+
+<p><img src="https://notes.shichao.io/lkd/figure_3.2.png" alt="https://notes.shichao.io/lkd/figure_3.2.png" /></p>
+
+<p>在x86系统中，结构<code class="highlighter-rouge">thread_info</code>定义在<code class="highlighter-rouge">&lt;asm/thread_info.h&gt;</code>中。每个任务的<code class="highlighter-rouge">thread_info</code>结构分配在栈的底部。thread_info中的task_struct指向任务的真实的task_struct。</p>
+<ul>
+  <li><a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/arch/x86/include/asm/thread_info.h#L26">arch/x86/include/asm/thread_info.h</a></li>
+</ul>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">thread_info</span> <span class="p">{</span>
+    <span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">task</span><span class="p">;</span>
+    <span class="k">struct</span> <span class="n">exec_domain</span> <span class="o">*</span><span class="n">exec_domain</span><span class="p">;</span>
+    <span class="n">__u32</span> <span class="n">flags</span><span class="p">;</span>
+    <span class="n">__u32</span> <span class="n">status</span><span class="p">;</span>
+    <span class="n">__u32</span> <span class="n">cpu</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">preempt_count</span><span class="p">;</span>
+    <span class="n">mm_segment_t</span> <span class="n">addr_limit</span><span class="p">;</span>
+    <span class="k">struct</span> <span class="n">restart_block</span> <span class="n">restart_block</span><span class="p">;</span>
+    <span class="kt">void</span> <span class="o">*</span><span class="n">sysenter_return</span><span class="p">;</span>
+    <span class="kt">int</span> <span class="n">uaccess_err</span><span class="p">;</span>
+<span class="p">};</span>
+
+</code></pre></div></div>
+
+<h3 id="文件描述符的存储">文件描述符的存储</h3>
+<p>process identification (PID)是一个数字（使用pid_t表示），用于区分进程。默认的最大值是32768(short int)，尽管该值可以增长到4000000万（在<code class="highlighter-rouge">&lt;linux/threads.h&gt;</code>中控制）。内核在文件描述符中存储pid。</p>
+
+<p>大型的服务器可能需要超过32768个进程。越大值表示该进程是最近才启动的（原文 The lower the value, the sooner the values will wrap around, destroying the useful notion that higher values indicate later-run processes than lower values）。管理员可以通过修改 <code class="highlighter-rouge">/proc/sys/kernel/pid_max</code>来增长最大值。</p>
+
+<p>在内核中，每个进程都可以直接通过一个指针指向<code class="highlighter-rouge">task_struct</code>。实际上，内核代码直接通过<code class="highlighter-rouge">struct task_struct</code>处理进程工作。所以，能够快速的查找到进程的描述符是很有用的，而查找是通过一个叫做<code class="highlighter-rouge">current</code>的宏来完成的。这个宏必须根据不同的体系结构提供不同的实现:</p>
+<ul>
+  <li>在某些体系结构中保存指向<code class="highlighter-rouge">task_struct</code>的指针在寄存器中</li>
+  <li>另一些体系结构比如x86（没有过多的寄存器）通过计算<code class="highlighter-rouge">thread_info</code>存储在内核栈的位置，然后查找<code class="highlighter-rouge">task_struct</code>。</li>
+</ul>
+
+<p>在x86结构中，<code class="highlighter-rouge">current</code>通过将栈指针的后13位置为0获得<code class="highlighter-rouge">thread_info</code>所在位置。这个是在<code class="highlighter-rouge">current_thread_info</code>中实现的，汇编代码如下所示:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">movl</span> <span class="err">$</span><span class="o">-</span><span class="mi">8192</span><span class="p">,</span> <span class="o">%</span><span class="n">ea</span>
+<span class="n">andl</span> <span class="o">%</span><span class="n">esp</span><span class="p">,</span> <span class="o">%</span><span class="n">eax</span>
+</code></pre></div></div>
+<p>上面的代码是在栈大小为8KB的前提下。当4K栈启动的时候，上面的8192会被替换为4096。<code class="highlighter-rouge">current</code>通过引用<code class="highlighter-rouge">thread_info</code>来返回<code class="highlighter-rouge">task_sturct</code>。</p>
+<ul>
+  <li><a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/include/asm-generic/current.h">include/asm-generic/current.h</a></li>
+</ul>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">current_thread_info</span><span class="p">()</span><span class="o">-&gt;</span><span class="n">task</span><span class="p">;</span>
+</code></pre></div></div>
+
+<h3 id="进程状态">进程状态</h3>
+<p>进程描述符中的state描述了进程当前的运行情况。
+<img src="https://notes.shichao.io/lkd/figure_3.3.png" alt="https://notes.shichao.io/lkd/figure_3.3.png" /></p>
+
+<p>系统中的每个进程都处于上面五个状态中的一个。状态通过五个标志来表示:</p>
+<ul>
+  <li>TASK_RUNNING: 进程可运行状态；进程可能处于运行状态，也可能在可运行队列中等待调度。只有当进程处于这个状态的时候，进程才有可能在用户空间运行； 同时也在内核空间表示进程在运行状态。</li>
+  <li>TASK_INTERRUPTIBLE: 进程处于睡眠状态(阻塞)，等待某些条件出现。如果进程进程接收到信号，进程也可能提前被唤醒，变成可运行状态。</li>
+  <li>TASK_UNINTERRUPTIBLE: 这个状态和TASK_INTERRUPTIBLE基本上一样，不同的是它不能接收信号而提前被唤醒。这个状态适用于进程必须等待某些事件发生并且不能被中断的情况，或者事件很快就会发生的情况。因为在该状态下进程不会响应信号，所以相比于TASK_INTERRUPTIBLE，TASK_UNINTERRUPTIBLE被使用的频率不是那么高。</li>
+  <li>__TASK_TRACED: 当前进程被其他进程跟踪，比如通过ptrace实现的debugger</li>
+  <li>__TASK_STOPPED: 进程被终止。进程既不处于运行状态，也没有资格被调度。当进程接收到信号SIGSTOP, SIGTSTP, SIGTTIN或者SIGTTOU，或者进程处于debugged的时候接收到任何信号，进程都会转变为__TASK_STOPPED。</li>
+</ul>
+
+<h3 id="操作进程状态">操作进程状态</h3>
+<p>内核代码经常需要改变进程状态。进程的改变通过下面的方式实现:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">set_task_state</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">state</span><span class="p">);</span> <span class="cm">/* set task ‘task’ to state ‘state’ */</span>
+</code></pre></div></div>
+<p>这个函数将进程设置为特定的状态。在某些场景下，该方法使用内存栅栏(memoryy barrier)保证其他处理器的有序执行（仅在SMP系统）。因此该方法实际上等同于，</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">task</span><span class="o">-&gt;</span><span class="n">state</span> <span class="o">=</span> <span class="n">state</span><span class="p">;</span>
+</code></pre></div></div>
+<p>方法set_current_state(state)等于set_task_state(current, state)。可以再<code class="highlighter-rouge">&lt;linux/sched.h&gt;</code>中看到这些方法的实现</p>
+<ul>
+  <li><a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/include/linux/sched.h#L226">nclude/linux/sched.h#L226</a></li>
+</ul>
+
+<h3 id="进程上下文">进程上下文</h3>
+<p>进程运行的代码来自可执行文件，并且运行在进程的地址空间中。</p>
+<ul>
+  <li>User-space(用户空间): 通常情况下进程运行在用户空间。</li>
+  <li>Kernel-space(内核空间): 当进程执行系统调用或者触发了异常的时候，进程会进入到内核空间。在这时候，内核代表当前进程运行(executing on behalf of the process)，同时处于进程的上下文中。只要在进程的上下文中，<code class="highlighter-rouge">current</code>宏就能正常工作。</li>
+</ul>
+
+<p>除了进程上下文，还有中断上下文。在中断上下文时，系统不代表进程运行，而是处于中断处理。中断处理不和任何进程绑定。退出内核后，进程继续在用户看空间运行，除非在间歇期有更高优先级的进程出现，进程调度器会选择那个更高优先级的进程运行而不是当前进程。</p>
+
+<p>进程只能通过下面的接口进入到内核空间:</p>
+<ul>
+  <li>系统调用</li>
+  <li>异常处理</li>
+</ul>
+
+<h3 id="进程树the-process-family-tree">进程树(The process family tree)</h3>
+<p>系统中所有的进程都是init进程的后代。内核在启动过程的最后一步启动init进程。init进程读取系统初始化脚本，并且执行更多的程序，最终完成系统的启动。</p>
+
+<ul>
+  <li>系统中的每一个进程都会有父进程。</li>
+  <li>每个进程都会有0个或者更多的子进程。</li>
+  <li>拥有相同父进程的进程被称为兄弟进程（siblings）。</li>
+</ul>
+
+<p>list_head中的next和prev存储了其他list_head中的地址。具体的结构可以参照下图:
+<img src="https://notes.shichao.io/utlk/figure_3-3.png" alt="https://notes.shichao.io/utlk/figure_3-3.png" /></p>
+
+<ul>
+  <li><a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/include/linux/list.h">include/linux/list.h</a></li>
+</ul>
+
+<p>进程之间的关系存储在进程描述符中。每个task_struct(<a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/include/linux/sched.h#L1170">include/linux/sched.h#L1170</a>)都含有:</p>
+<ul>
+  <li>parent: 指向父进程的task_struct</li>
+  <li>children: 指向子进程列表(struct list_head)</li>
+</ul>
+
+<p>可以通过如下的方式获取父进程的描述符:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">my_parent</span> <span class="o">=</span> <span class="n">current</span><span class="o">-&gt;</span><span class="n">parent</span><span class="p">;</span>
+</code></pre></div></div>
+<p>可以通过如下方式遍历进程的所有子进程:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">task</span><span class="p">;</span>
+<span class="k">struct</span> <span class="n">list_head</span> <span class="o">*</span><span class="n">list</span><span class="p">;</span>
+
+<span class="n">list_for_each</span><span class="p">(</span><span class="n">list</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">current</span><span class="o">-&gt;</span><span class="n">children</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">task</span> <span class="o">=</span> <span class="n">list_entry</span><span class="p">(</span><span class="n">list</span><span class="p">,</span> <span class="k">struct</span> <span class="n">task_struct</span><span class="p">,</span> <span class="n">sibling</span><span class="p">);</span>
+    <span class="cm">/* task now points to one of current's children */</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<ul>
+  <li>list_for_each: <a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/include/linux/list.h#L367">include/linux/list.h#L367</a></li>
+</ul>
+
+<p>init进程的描述符存放在全局的init_task中，下面的代码通常可以执行成功:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">task</span><span class="p">;</span>
+
+<span class="k">for</span> <span class="p">(</span><span class="n">task</span> <span class="o">=</span> <span class="n">current</span><span class="p">;</span> <span class="n">task</span> <span class="o">!=</span> <span class="o">&amp;</span><span class="n">init_task</span><span class="p">;</span> <span class="n">task</span> <span class="o">=</span> <span class="n">task</span><span class="o">-&gt;</span><span class="n">parent</span><span class="p">)</span>
+<span class="p">;</span>
+<span class="cm">/* task now points to init */</span>
+</code></pre></div></div>
+
+<p>你可以根据进程的层级关系从一个进程跟踪到另一个进程。你可以很轻松的遍历所有进程，这是因为系统的进程列表是循环的双向链表。
+获取链表中的下一个进程，可以通过下面的代码实现:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">list_entry</span><span class="p">(</span><span class="n">task</span><span class="o">-&gt;</span><span class="n">tasks</span><span class="p">.</span><span class="n">next</span><span class="p">,</span> <span class="k">struct</span> <span class="n">task_struct</span><span class="p">,</span> <span class="n">tasks</span><span class="p">)</span>
+</code></pre></div></div>
+<p>获取链表中的前一个进程，可以通过如下的代码实现:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">list_entry</span><span class="p">(</span><span class="n">task</span><span class="o">-&gt;</span><span class="n">tasks</span><span class="p">.</span><span class="n">prev</span><span class="p">,</span> <span class="k">struct</span> <span class="n">task_struct</span><span class="p">,</span> <span class="n">tasks</span><span class="p">)</span>
+</code></pre></div></div>
+<ul>
+  <li>list_entry: <a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/include/linux/list.h#L348">include/linux/list.h</a></li>
+</ul>
+
+<p>上面的两段代码在内核中有对应的宏，分别是<code class="highlighter-rouge">next_task(task)</code>和<code class="highlighter-rouge">prev_task(task)</code>。
+宏<code class="highlighter-rouge">for_each_process(task)</code>可以遍历进程列表，每次循环<code class="highlighter-rouge">task</code>指向列表中的下一个进程:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">task</span><span class="p">;</span>
+
+<span class="n">for_each_process</span><span class="p">(</span><span class="n">task</span><span class="p">)</span> <span class="p">{</span>
+    <span class="cm">/* this pointlessly prints the name and PID of each task */</span>
+    <span class="n">printk</span><span class="p">(</span><span class="s">"%s[%d]</span><span class="se">\n</span><span class="s">"</span><span class="p">,</span> <span class="n">task</span><span class="o">-&gt;</span><span class="n">comm</span><span class="p">,</span> <span class="n">task</span><span class="o">-&gt;</span><span class="n">pid</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<ul>
+  <li>for_each_process: <a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/include/linux/sched.h#L2139">include/linux/sched.h#L2139</a></li>
+</ul>
+
+<p>当系统中有很多进程的饿时候，遍历每个进程的操作是很昂贵的，在这么做之前你需要三思。</p>
+
+<h2 id="进程创建">进程创建</h2>
+
+<p>大多数操作系统实现spawn机制，在新的地址空间来创建进程，读取可运行程序。unix系统将这几步分为两个方法: <code class="highlighter-rouge">fork()</code>和<code class="highlighter-rouge">exec()</code>。</p>
+<ul>
+  <li><code class="highlighter-rouge">fork()</code>: 通过复制当前进程创建新的进程。只有PID、PPID(父进程pid)和某些不继承的资源与父进程不一样。</li>
+  <li><code class="highlighter-rouge">exec()</code>: 装载一个新的程序到地址空间，并且开始执行。</li>
+</ul>
+
+<h3 id="copy-on-write">Copy-on-Write</h3>
+<p>如果<code class="highlighter-rouge">fork()</code>复制父进程的所有资源到子进程，这是低效的，这是因为父子进程可能共享这些资源。更糟糕的是，子进程可能会立刻执行新的程序（通过exec加载），之前的所有拷贝内容都浪费了。</p>
+
+<p>在linux中，<code class="highlighter-rouge">fork()</code>通过copy-on-write实现。</p>
+
+<p>Copy-on-write(COW)可以延迟或者不复制数据。相比于复制进程的地址空间，父进程和子进程共享一个拷贝。</p>
+
+<p>如果某个数据被修改，那么这个数据将会被标记，然后父子进程各自有自己的一个拷贝。资源的复制只会在资源被修改的时候才会发生，直到修改发生之前这些资源都是只读的。</p>
+
+<p>如果某些页从来不会被改写，那么它们也就不会被拷贝。</p>
+
+<p>fork()唯一的开销就是页表的拷贝和子进程描述符的创建。通常情况下，如果进程在fork()之后立刻执行新的程序，那么copy-on-write可以节省大量的资源拷贝带来的开销。这是一个很重要的优化，因为unix哲学鼓励进快速启动。</p>
+
+<h3 id="forking">Forking</h3>
+
+<p>linux通过<code class="highlighter-rouge">clone()</code>实现<code class="highlighter-rouge">fork()</code>，<code class="highlighter-rouge">clone()</code>接受一系列的标志用于指定哪些资源需要被父子进程共享。</p>
+<ul>
+  <li><code class="highlighter-rouge">fork()</code>, <code class="highlighter-rouge">vfork()</code>和<code class="highlighter-rouge">__clone</code>都是调用<code class="highlighter-rouge">clone()</code>，并且指定各自所需的标志位</li>
+  <li><code class="highlighter-rouge">clone()</code>调用<code class="highlighter-rouge">do_fork()</code></li>
+</ul>
+
+<p>fork中的大部分工作是在<code class="highlighter-rouge">do_fork()</code>中完成的，<code class="highlighter-rouge">do_fork()</code>定义在<code class="highlighter-rouge">&lt;kernal/fork.c&gt;</code>中。<code class="highlighter-rouge">do_fork()</code>调用<code class="highlighter-rouge">copy_process()</code>方法，然后运行新的进程。</p>
+<ul>
+  <li>do_fork(): <a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/kernel/fork.c#L1354">kernel/fork.c#L1354</a></li>
+  <li>copy_process(): <a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/kernel/fork.c#L957">kernel/fork.c#L957</a></li>
+</ul>
+
+<p>fork中最有趣的一部分在<code class="highlighter-rouge">copy_process()</code>中:</p>
+<ol>
+  <li>它调用<code class="highlighter-rouge">dup_task_struct()</code>创建子进程的描述符，同时设置以下的属性和父进程一致:
+    * 内核栈
+    * thread_info
+    * task_struct</li>
+  <li>检查当前进程没有超过当前用户的可启动进程限制。</li>
+  <li>一些属性被清除或者初始化，用于区分父子进程:
+    * 不需要从父进程继承的属性主要包括一些统计信息
+    * task_struct的大多数属性仍然保持不变</li>
+  <li>进程状态设置为TASK_UNINTERRUPTIBLE，保证当前进程还未开始运行</li>
+  <li>调用<code class="highlighter-rouge">copy_flags()</code>更新task_struct中的标志信息（per process flags: <a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/include/linux/sched.h#L1693">include/linux/sched.h#L1693</a>）
+    * PF_SUPERPRIV表示当前进程是否需要超级用户权限，这个标志位被清除
+    * PF_FORKNOEXEC表示当前进程还没有执行<code class="highlighter-rouge">exec()</code>，这个标志位被设置</li>
+  <li>调用alloc_pid给子进程分配pid</li>
+  <li>根据传入到clone的标志位，<code class="highlighter-rouge">copy_process()</code>复制或者共享下面的资源:
+    * Open files（打开的文件）
+    * Filesystem information（文件系统信息）
+    * Signal handlers（信号处理）
+    * Process address space（进程空间）
+    * Namespace（命名空间）</li>
+  <li>copy_process()返回一个指向当前进程的指针</li>
+</ol>
+
+<p>回到<code class="highlighter-rouge">do_fork()</code>方法，如果<code class="highlighter-rouge">copy_process()</code>成功返回，新进程被唤醒并且执行。
+内核会先运行子进程。如果内核先执行父进程，那么当子进程在启动后立刻执行exec方法的时候，父进程修改数据后copy-on-write带来的拷贝就会变得无效了（注1）。</p>
+
+<p>==注1: 在这种情况下copy-on-write带来的拷贝对于子进程是没有意义的，因为子进程执行了exec方法，exec会覆盖子进程里面原有的数据==</p>
+
+<h3 id="vfork">vfork()</h3>
+
+<p><code class="highlighter-rouge">vfork()</code> 方法和<code class="highlighter-rouge">fork()</code>方法的效果一致，除了页表不进行复制。子进程作为父进程地址空间内的唯一线程运行，并且父进程会阻塞，直到子进程调用<code class="highlighter-rouge">exec()</code> 或者退出。子进程不允许对地址空间进行修改。
+如今，再有了copy-on-write和子进程优先运行的语义下，<code class="highlighter-rouge">vfork()</code>带来的唯一好处是不拷贝父进程的页表。
+<code class="highlighter-rouge">vfork()</code> 也是通过调用<code class="highlighter-rouge">clone()</code>实现的，它传入了特殊的标志:</p>
+<ol>
+  <li>在copy_process中，task_struct中的vfork_done被设置为NULL。</li>
+  <li>在<code class="highlighter-rouge">do_fork()</code>中，如果特殊的标志位被设置，vfork_done指向一个特殊的地址。</li>
+  <li>当子进程运行后，父进程等待子进程发送信号给它。信号的发送是通过vfork_done指针完成的。</li>
+  <li>在<code class="highlighter-rouge">mm_release()</code>方法中，vfork_done会被检查是否为NULL。如果不是，父进程会被发送信号。</li>
+  <li>回到<code class="highlighter-rouge">do_fork()</code>方法，父进程唤醒并且返回。</li>
+</ol>
+
+<p>如果上面的几步都顺利执行，那么子进程会在新的地址空间运行，并且父进程回到原来的地址空间继续执行。开销是很低的，但是实现不够优雅。</p>
+
+<p>==注2: 子进程只有调用exec，父进程才能继续执行？==</p>
+
+<h2 id="linux线程的实现">linux线程的实现</h2>
+
+<ul>
+  <li>线程是一种编程抽象，多个线程共享同一个地址空间。</li>
+  <li>线程也可以共享打开的文件和其他资源。</li>
+  <li>在多核系统上，多线程可以用于并发编程，并且在这种情况下并发编程也可以叫做并行编程。</li>
+</ul>
+
+<p>linux对于线程有自己独特的实现:</p>
+
+<ul>
+  <li>对于linux内核来说，不存在线程的概念。Linux通过标准的进程来模拟线程的实现。</li>
+  <li>linux对于线程没有提供特殊的调度方式，也没有提供特殊的数据结构来表示线程。相反，一个线程仅仅是和其他进程共享特定资源的进程。</li>
+  <li>每个线程都有自己的task_struct，对于内核来说就是一个普通的进程。线程仅仅是共享资源，比如地址空间。</li>
+</ul>
+
+<p>这种实现方式和其他操作系统比如windows、sun solaris完全不同，这些操作系统原生支持了线程。</p>
+
+<h3 id="创建线程">创建线程</h3>
+
+<p>线程的创建和普通进程一样，需要传递特殊的标志位用于共享特定的资源:</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>clone(CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND, 0);
+</code></pre></div></div>
+<p>上面的代码和fork()基本一致，除了设置了标志CLONE_VM，CLONE_FS, CLONE_FILES和CLONE_SIGHAND。
+而fork()则是通过下面的代码实现的，</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">clone</span><span class="p">(</span><span class="n">SIGCHLD</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</code></pre></div></div>
+<p>vfork()则是通过下面的代码实现的，</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">clone</span><span class="p">(</span><span class="n">CLONE_VFORK</span> <span class="o">|</span> <span class="n">CLONE_VM</span> <span class="o">|</span> <span class="n">SIGCHLD</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>
+</code></pre></div></div>
+
+<p>上面提到的标志位，在<code class="highlighter-rouge">&lt;linux/sched.h&gt;</code>(<a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/include/linux/sched.h#L5">include/linux/sched.h#L5</a>)中定义的，这些标志位用于指定子进程和父进程之间共享哪些资源。</p>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Flag	        Meaning
+CLONE_FILES	 Parent and child share open files.
+CLONE_FS	    Parent and child share filesystem information.
+CLONE_IDLETASK	Set PID to zero (used only by the idle tasks).
+CLONE_NEWNS	    Create a new namespace for the child.
+CLONE_PARENT	Child is to have same parent as its parent.
+CLONE_PTRACE	Continue tracing child.
+CLONE_SETTID	Write the TID back to user-space.
+CLONE_SETTLS	Create a new TLS (thread-local storage) for the child.
+CLONE_SIGHAND	Parent and child share signal handlers and blocked signals.
+CLONE_SYSVSEM	Parent and child share System V SEM_UNDO semantics.
+CLONE_THREAD	Parent and child are in the same thread group.
+CLONE_VFORK	vfork() was used and the parent will sleep until the child wakes it.
+CLONE_UNTRACED	Do not let the tracing process force CLONE_PTRACE on the child.
+CLONE_STOP	Start process in the TASK_STOPPED state.
+CLONE_CHILD_CLEARTID	Clear the TID in the child.
+CLONE_CHILD_SETTID	Set the TID in the child.
+CLONE_PARENT_SETTID	Set the TID in the parent.
+CLONE_VM	Parent and child share address space.
+
+</code></pre></div></div>
+
+<h3 id="内核线程">内核线程</h3>
+
+<p>内核线程是在内核空间中的进程，它们用于内核在后台执行某些特定的操作。
+和普通线程的不同:</p>
+<ul>
+  <li>内核线程没有地址空间。它们的mm指针为NULL。</li>
+  <li>内核线程只能运行在内核空间，不会切换上下文到用户空间。</li>
+</ul>
+
+<p>和普通线程相似的地方:</p>
+<ul>
+  <li>内核线程是可调度的并且是可抢占的。</li>
+</ul>
+
+<p>linux系统会把某些任务交给内核线程，比如<code class="highlighter-rouge">flush</code>线程和<code class="highlighter-rouge">ksoftirqd</code>。使用<code class="highlighter-rouge">ps -ef</code>可以看到这些内核线程。</p>
+
+<p>内核线程是在系统启动的时候启动的。一个内核线程只能被另一个内核线程启动。内核通过fork kthreadd进程来自动启动这些内核线程。</p>
+
+<p>内核线程相关的接口定义在<code class="highlighter-rouge">&lt;linux/kthread.h&gt;</code>(<a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/include/linux/kthread.h">include/linux/kthread.h</a>)中，</p>
+
+<p><code class="highlighter-rouge">kthread_create()</code> 启动一个新的内核线程，</p>
+
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">kthread_create</span><span class="p">(</span><span class="kt">int</span> <span class="p">(</span><span class="o">*</span><span class="n">threadfn</span><span class="p">)(</span><span class="kt">void</span> <span class="o">*</span><span class="n">data</span><span class="p">),</span>
+                                   <span class="kt">void</span> <span class="o">*</span><span class="n">data</span><span class="p">,</span>
+                                   <span class="k">const</span> <span class="kt">char</span> <span class="n">namefmt</span><span class="p">[],</span>
+                                   <span class="p">...)</span>
+</code></pre></div></div>
+
+<p>新的进程是通过<code class="highlighter-rouge">clone()</code>创建的，</p>
+<ul>
+  <li>新的进程会执行threadfn函数，这个函数被当做参数传入kthread_create</li>
+  <li>进程的名字是namefmt</li>
+  <li>该进程被创建后处于非运行状态，直到调用<code class="highlighter-rouge">wake_Up_process()</code>之后才能够运行。</li>
+</ul>
+
+<p>通过函数<code class="highlighter-rouge">kthread_run()</code>，进程可以被创建并且运行:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">kthread_run</span><span class="p">(</span><span class="kt">int</span> <span class="p">(</span><span class="o">*</span><span class="n">threadfn</span><span class="p">)(</span><span class="kt">void</span> <span class="o">*</span><span class="n">data</span><span class="p">),</span>
+                                <span class="kt">void</span> <span class="o">*</span><span class="n">data</span><span class="p">,</span>
+                                <span class="k">const</span> <span class="kt">char</span> <span class="n">namefmt</span><span class="p">[],</span>
+                                <span class="p">...)</span>
+</code></pre></div></div>
+
+<p>这个方法<code class="highlighter-rouge">kthread_run()</code>, 实际上是一个宏,</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="cp">#define kthread_run(threadfn, data, namefmt, ...)                 \
+({                                                                \
+    struct task_struct *k;                                        \
+                                                                  \
+    k = kthread_create(threadfn, data, namefmt, ## __VA_ARGS__);  \
+    if (!IS_ERR(k))                                               \
+        wake_up_process(k);                                       \
+    k;                                                            \
+})
+</span></code></pre></div></div>
+
+<p>内核线程创建后会一直运行知道它调用<code class="highlighter-rouge">do_exit()</code>或者内核其他部分执行<code class="highlighter-rouge">kthread_stop()</code>，在调用<code class="highlighter-rouge">kthread_stop()</code>的时候传入<code class="highlighter-rouge">kthread_create()</code>返回的task_struct:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kt">int</span> <span class="n">kthread_stop</span><span class="p">(</span><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">k</span><span class="p">)</span>
+</code></pre></div></div>
+<h2 id="进程终止">进程终止</h2>
+
+<p>当进程终止的时候，内核释放进程拥有的资源并且通知该进程的父进程。
+当进程调用<code class="highlighter-rouge">exit()</code>方法的时候会终止自己:</p>
+<ul>
+  <li>明确的: 进程调用系统调用<code class="highlighter-rouge">exit()</code></li>
+  <li>隐晦的: 进程从main函数返回的时候。C编译器会在main的最后添加<code class="highlighter-rouge">exit()</code></li>
+</ul>
+
+<p>当进程接收到一个它不能处理或者忽略的信号或者异常的时候，进程会被动终止。
+无论进程以何种方式被终止，最后都需要调用<code class="highlighter-rouge">do_exit()</code>，<code class="highlighter-rouge">do_exit()</code>定义在<code class="highlighter-rouge">kernel/exit.c</code>(<a href="https://github.com/shichao-an/linux-2.6.34.7/blob/master/kernel/exit.c#L900">kernel/exit.c</a>)中。<code class="highlighter-rouge">do_exit()</code>做了如下的工作:</p>
+<ol>
+  <li>设置task_struct的PF_EXITING标志位</li>
+  <li>调用<code class="highlighter-rouge">del_timer_sync()</code>方法移除所有内核计时器。当del_timer_sync()返回的时候保证没有计时器正在运行，并且没有计时器在排队。</li>
+  <li>如果BSD的进程统计功能开启，<code class="highlighter-rouge">do_exit()</code>调用<code class="highlighter-rouge">acct_update_integrals()</code>将统计信息回写</li>
+  <li>调用<code class="highlighter-rouge">exit_mm()</code>方法释放该进程的<code class="highlighter-rouge">mm_struct</code>，如果没有其他进程在使用这个进程空间，内核会释放空间</li>
+  <li>调用<code class="highlighter-rouge">exit_sem()</code>。如果进程在等待某个IPC semaphore，它会退出等待队列</li>
+  <li>调用<code class="highlighter-rouge">exit_files()</code>和<code class="highlighter-rouge">exit_fs()</code>来减少文件句柄和文件系统的引用。</li>
+  <li>设置进程的退出码，这个退出码存放在task_struct的exit_code中，父进程可以选择性的获取该退出码。(It sets the task’s exit code (stored in the exit_code member of the task_struct) to that provided by exit() or whatever kernel mechanism forced the termination. The exit code is stored here for optional retrieval by the parent.)</li>
+  <li>发送信号给父进程，并且通知子进程寻找新的父进程
+    * 调用<code class="highlighter-rouge">exit_notify()</code>发送信号给进程的父进程
+    * 将同线程组的线程或者init进程指定为其子进程的新的父进程
+    * 设置task_struct中的exit_state为EXIT_ZOMBIE</li>
+  <li>调用<code class="highlighter-rouge">schedule()</code>切换到新的进程
+    * 因为当前进程处于不可调度状态，所以这会是当前进程执行的最后的代码。<code class="highlighter-rouge">do_exit()</code>没有返回。</li>
+</ol>
+
+<p>到这里:</p>
+<ul>
+  <li>所有和该进程相关的对象已经释放</li>
+  <li>该进程不可运行，并且状态是EXIT_ZOMBIE</li>
+  <li>目前其拥有的唯一内存是内核栈，thread_info和task_struct结构</li>
+  <li>该进程仍然存在用于提供信息给其父进程。当父进程提取信息后，或者通知内核其不感兴趣，该进程剩余的内存就会被释放。</li>
+</ul>
+
+<h3 id="移除进程描述符">移除进程描述符</h3>
+
+<p>当<code class="highlighter-rouge">do_exit()</code>完成后，进程描述符仍然存在，但是进程处于僵尸状态不能运行。
+进程的清除工作和移除其描述符分开的步骤。这样做可以使得系统可以在进程终止后获取信息。
+在遇到下面的情况后，终止进程的task_struct会回收利用:</p>
+<ul>
+  <li>父进程从被终止的进程的获取信息</li>
+  <li>父进程通知系统它不关注被终止的进程</li>
+</ul>
+
+<p><code class="highlighter-rouge">wait()</code> 方法通过系统调用<code class="highlighter-rouge">wait4()</code>来实现。
+通常情况下调用<code class="highlighter-rouge">wait()</code>的方法后进程会被挂起直到其中的一个子进程退出，此时<code class="highlighter-rouge">wait()</code>返回退出进程的pid。</p>
+
+<p><code class="highlighter-rouge">release_task()</code> 用于释放进程描述符:</p>
+<ol>
+  <li>调用<code class="highlighter-rouge">__exit_signal()</code>，<code class="highlighter-rouge">__exit_signal()</code>调用<code class="highlighter-rouge">__unhash_process()</code>方法，<code class="highlighter-rouge">__unhash_process()</code>最后调用detach_pid()把进程从pidhash移除，并且从任务列表中删除。</li>
+  <li><code class="highlighter-rouge">__exit_signal()</code>释放进程的其他所有剩余资源</li>
+  <li>如果线程是线程组的最后一个线程，并且leader的状态是zombie，<code class="highlighter-rouge">release_task()</code>通知僵尸进程的父进程</li>
+  <li><code class="highlighter-rouge">release_task()</code>调用<code class="highlighter-rouge">put_task_struct()</code>来释放进程内核栈中的页，和thread_info以及task_struct中的slab缓存</li>
+</ol>
+
+<h3 id="the-dilemma-of-the-parentless-task">The Dilemma of the Parentless Task</h3>
+
+<p>如果父进程比子进程先退出，子进程必须寻找一个新的进程作为其父进程。否则没有父进程的被终止进程将会一直保持僵尸状态，浪费系统的内存。</p>
+
+<p>为了防止无父进程的子进程被终止的时候一直处于僵尸状态，需要从线程组或者init进程中寻找一个新的父进程。</p>
+
+<p><code class="highlighter-rouge">do_exit()</code> 调用<code class="highlighter-rouge">exit_notify()</code>，<code class="highlighter-rouge">exit_notify()</code>调用<code class="highlighter-rouge">forget_original_parent()</code>，<code class="highlighter-rouge">forget_original_parent()</code>调用<code class="highlighter-rouge">find_new_reaper()</code>来寻找新的父类:</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">static</span> <span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="nf">find_new_reaper</span><span class="p">(</span><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">father</span><span class="p">)</span>
+<span class="p">{</span>
+    <span class="k">struct</span> <span class="n">pid_namespace</span> <span class="o">*</span><span class="n">pid_ns</span> <span class="o">=</span> <span class="n">task_active_pid_ns</span><span class="p">(</span><span class="n">father</span><span class="p">);</span>
+    <span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="kr">thread</span><span class="p">;</span>
+
+    <span class="kr">thread</span> <span class="o">=</span> <span class="n">father</span><span class="p">;</span>
+    <span class="n">while_each_thread</span><span class="p">(</span><span class="n">father</span><span class="p">,</span> <span class="kr">thread</span><span class="p">)</span> <span class="p">{</span>
+      <span class="k">if</span> <span class="p">(</span><span class="kr">thread</span><span class="o">-&gt;</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">PF_EXITING</span><span class="p">)</span>
+          <span class="k">continue</span><span class="p">;</span>
+      <span class="k">if</span> <span class="p">(</span><span class="n">unlikely</span><span class="p">(</span><span class="n">pid_ns</span><span class="o">-&gt;</span><span class="n">child_reaper</span> <span class="o">==</span> <span class="n">father</span><span class="p">))</span>
+          <span class="n">pid_ns</span><span class="o">-&gt;</span><span class="n">child_reaper</span> <span class="o">=</span> <span class="kr">thread</span><span class="p">;</span>
+      <span class="k">return</span> <span class="kr">thread</span><span class="p">;</span>
+    <span class="p">}</span>
+
+    <span class="k">if</span> <span class="p">(</span><span class="n">unlikely</span><span class="p">(</span><span class="n">pid_ns</span><span class="o">-&gt;</span><span class="n">child_reaper</span> <span class="o">==</span> <span class="n">father</span><span class="p">))</span> <span class="p">{</span>
+        <span class="n">write_unlock_irq</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tasklist_lock</span><span class="p">);</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">unlikely</span><span class="p">(</span><span class="n">pid_ns</span> <span class="o">==</span> <span class="o">&amp;</span><span class="n">init_pid_ns</span><span class="p">))</span>
+        <span class="n">panic</span><span class="p">(</span><span class="s">"Attempted to kill init!"</span><span class="p">);</span>
+
+        <span class="n">zap_pid_ns_processes</span><span class="p">(</span><span class="n">pid_ns</span><span class="p">);</span>
+        <span class="n">write_lock_irq</span><span class="p">(</span><span class="o">&amp;</span><span class="n">tasklist_lock</span><span class="p">);</span>
+
+        <span class="cm">/*
+        * We can not clear -&gt;child_reaper or leave it alone.
+        * There may by stealth EXIT_DEAD tasks on -&gt;children,
+        * forget_original_parent() must move them somewhere.
+        */</span>
+        <span class="n">pid_ns</span><span class="o">-&gt;</span><span class="n">child_reaper</span> <span class="o">=</span> <span class="n">init_pid_ns</span><span class="p">.</span><span class="n">child_reaper</span><span class="p">;</span>
+    <span class="p">}</span>
+
+    <span class="k">return</span> <span class="n">pid_ns</span><span class="o">-&gt;</span><span class="n">child_reaper</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<p>上面的代码试图在进程的线程组中查找一个进程。如果线程组中没有对应的进程，那么返回init进程。</p>
+
+<p>在合适的父进程找到后，每个子进程需要重新指定父进程。</p>
+<div class="language-c highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">reaper</span> <span class="o">=</span> <span class="n">find_new_reaper</span><span class="p">(</span><span class="n">father</span><span class="p">);</span>
+<span class="n">list_for_each_entry_safe</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">father</span><span class="o">-&gt;</span><span class="n">children</span><span class="p">,</span> <span class="n">sibling</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">p</span><span class="o">-&gt;</span><span class="n">real_parent</span> <span class="o">=</span> <span class="n">reaper</span><span class="p">;</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">parent</span> <span class="o">==</span> <span class="n">father</span><span class="p">)</span> <span class="p">{</span>
+        <span class="n">BUG_ON</span><span class="p">(</span><span class="n">p</span><span class="o">-&gt;</span><span class="n">ptrace</span><span class="p">);</span>
+        <span class="n">p</span><span class="o">-&gt;</span><span class="n">parent</span> <span class="o">=</span> <span class="n">p</span><span class="o">-&gt;</span><span class="n">real_parent</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="n">reparent_thread</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">father</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div></div>
+<pre><code class="language-ptrace_exit_finish()```会被调用重新指定父进程，但是作用的对象是被ptraced的子进程。">```c
+void exit_ptrace(struct task_struct *tracer)
+{
+    struct task_struct *p, *n;
+    LIST_HEAD(ptrace_dead);
+
+    write_lock_irq(&amp;tasklist_lock);
+    list_for_each_entry_safe(p, n, &amp;tracer-&gt;ptraced, ptrace_entry) {
+        if (__ptrace_detach(tracer, p))
+        list_add(&amp;p-&gt;ptrace_entry, &amp;ptrace_dead);
+    }
+    write_unlock_irq(&amp;tasklist_lock);
+
+    BUG_ON(!list_empty(&amp;tracer-&gt;ptraced));
+
+    list_for_each_entry_safe(p, n, &amp;ptrace_dead, ptrace_entry) {
+    list_del_init(&amp;p-&gt;ptrace_entry);
+    release_task(p);
+    }
+}
+</code></pre>
+<p>当一个进程被ptraced后，调试进程会临时成为被ptraced进程的父进程。当一个进程的父进程终止的时候，它和它的兄弟进程必须重新寻找父进程。在之前的内核中，这会导致系统遍历所有进程来寻找兄弟进程。解决方法是单独为进程存储一份列表，列表中存放ptraced继承，这样用于减少寻找子进程的开销。</p>
+
+<p>当所有进程重新找到父节点后，就不存在进程一直处于僵尸状态而无法回收的危险了。init进程针对其子进程调用<code class="highlighter-rouge">wait()</code>方法，清除僵尸进程。</p>
+
+<p>原文地址: <a href="https://notes.shichao.io/lkd/ch3/">https://notes.shichao.io/lkd/ch3/</a></p>
+

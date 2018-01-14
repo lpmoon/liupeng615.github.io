@@ -8,15 +8,14 @@
 
 <p>启动三个docker实例,然后查看默认的docker0网桥的映射表。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 docker run -t -i --name test1 docker-java
 
 docker run -t -i --name test2 docker-java
 
 docker run -t -i --name test3 docker-java
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>来看看这两个docker实例对应的mac地址是多少,</p>
 
@@ -40,11 +39,10 @@ docker run -t -i --name test3 docker-java
 
 <p>那么我们在test1上ping一下test2后,再看会有什么结果呢？</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 ping 172.17.0.6&lt;/pre&gt;
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>运行后再次查看映射表,</p>
 
@@ -54,15 +52,14 @@ ping 172.17.0.6&lt;/pre&gt;
 
 <p>除了三个docker实例的mac地址，另外3个mac地址是属于谁的呢？在宿主机上执行如下命令,</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 ifconfig |grep HWaddr|awk '{print $1 "  " $5}'
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>上面的命令主要是找出本机的设备名称以及对应的mac地址。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 docker0 02:42:0a:b2:f7:44
 
 eth0 b8:88:e3:ee:cc:52
@@ -77,8 +74,7 @@ vethb1afec1 3e:d0:13:7e:f9:8c
 
 wlan0 60:6c:66:00:bf:86
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>其他三个mac地址对应的设备名称正好和三个veth与网桥桥接在一起的设备名称一样。</p>
 
@@ -116,13 +112,12 @@ wlan0 60:6c:66:00:bf:86
 
 <p>如果发送方再发送消息时并不知道对方的mac地址(比如第一次交互)怎么办呢？根据在docker1进行实验(在docker1上ping docker2)发现，docker1会发送arp广播让ip为目标ip的docker实例发送消息给docker1。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 18:18:55.215940 02:42:ac:11:00:0a (oui Unknown) &amp;gt; Broadcast, ethertype ARP (0x0806), length 42: Request who-has 172.17.0.11 tell 172.17.0.10, length 28
 
 18:18:55.215975 02:42:ac:11:00:0b (oui Unknown) &amp;gt; 02:42:ac:11:00:0a (oui Unknown), ethertype ARP (0x0806), length 42: Reply 172.17.0.11 is-at 02:42:ac:11:00:0b (oui Unknown), length 28
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>这样docker1和网桥就都知道了docker2的mac地址，同时docker1会将docker2的mac地址和ip写入到arp表中作为缓存，下次访问的时候访问arp表就可以获得到对应的mac地址了。</p>
 
@@ -132,11 +127,10 @@ wlan0 60:6c:66:00:bf:86
 
 <p>我们来看看宿主机的上配置的NAT规则，</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 sudo iptables -t nat -vL
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p><img src="http://ww4.sinaimg.cn/large/87f5e2f6jw1fa3b7z5mmgj20uz0at0yr.jpg" alt="http://ww4.sinaimg.cn/large/87f5e2f6jw1fa3b7z5mmgj20uz0at0yr.jpg" /></p>
 

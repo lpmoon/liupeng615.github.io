@@ -8,7 +8,7 @@
 
 <p>在中断运行route命令后可以得到本机的路由表，宿主机会根据路由表决定一个报文的最终走向。</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 root@lpmoon-ThinkPad-S430:~# route
 
 Kernel IP routing table
@@ -23,8 +23,7 @@ default         192.168.1.1     0.0.0.0         UG    0      0        0 wlan0
 
 192.168.1.0     *               255.255.255.0   U     9      0        0 wlan0
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>我们可以看到默认路由的定义是将报文最终会被发送到wlan0网卡，由该网卡与外界进行通讯。而表中172.17.0.0对应的就是容器之间通讯的转发规则。</p>
 
@@ -56,7 +55,7 @@ default         192.168.1.1     0.0.0.0         UG    0      0        0 wlan0
 
 <p>在终端运行iptables-save可以看到如下规则，</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 // FILTER
 
 -A FORWARD -i docker0 ! -o docker0 -j ACCEPT
@@ -65,8 +64,7 @@ default         192.168.1.1     0.0.0.0         UG    0      0        0 wlan0
 
 -A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>在解释这几个规则是什么意思之前先来看一下这两条规则中出现的-i和-o参数是什么意思。还是通过man命令，</p>
 
@@ -102,13 +100,12 @@ default         192.168.1.1     0.0.0.0         UG    0      0        0 wlan0
 
 <p>在终端运行如下的命令，</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 iptables -D FORWARD -i docker0 ! -o docker0 -j ACCEPT
 
 iptables -A FORWARD -i docker0 ! -o docker0 -j DROP
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>在之前可以联通外网的docker容器中运行 ping www.baidu.com后可以发现，容易与外界网络的通讯中断了。</p>
 
@@ -116,11 +113,10 @@ iptables -A FORWARD -i docker0 ! -o docker0 -j DROP
 
 <p>在终端运行如下的命令，</p>
 
-<div class="highlighter-rouge"><pre class="highlight"><code>
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>
 iptables -t nat -D POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE
 
-</code></pre>
-</div>
+</code></pre></div></div>
 
 <p>和禁用转发可以达到相同的效果。</p>
 

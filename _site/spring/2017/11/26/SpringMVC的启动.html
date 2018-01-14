@@ -1,0 +1,186 @@
+<p>传统的使用SpringMVC的方法是在web.xml中配置DispatchServlet，在SpringMVC 3.1版本后提供了一种新的启动方式。在介绍这种新的方式之前，有必要先介绍一下Servlet 3.0的一个新特性 <strong>ServletContainerInitializer</strong> 。先看一下javadoc对该接口的介绍</p>
+
+<div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>实现该接口的类会成为web应用的入口，并且在启动期间可以注入servlets，filters，和listeners。
+
+该接口的实现类可能会包含 **javax.servlet.annotation.HandlesTypes** 注解，该注解的value对应的Class&lt;?&gt; []， 用于表示该接口的实现类的onStartup方法会接收Class&lt;?&gt; []对应的实现或者子类作为参数。
+
+如果该接口的实现类不包含 **javax.servlet.annotation.HandlesTypes** 注解，或者应用中没有该注解中对应的Class，则需要传递null给onStartup方法。
+
+如果实现了该接口则需要在jar的META-INF/services目录下放置一个文件，改文件的名称必须是该接口的全名称。
+</code></pre></div></div>
+
+<p>从上面javadoc的注释可以看出，当应用启动的时候，如果有 <strong>ServletContainerInitializer</strong> 的实现类并且有相应的配置，则会使用该类作为web的入口。</p>
+
+<p>SpringMVC新的启动方式正是基于上面提到的 <strong>ServletContainerInitializer</strong> 接口，其实现类是 <strong>SpringServletContainerInitializer</strong> ，下面看看该类的实现，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nd">@HandlesTypes</span><span class="o">(</span><span class="n">WebApplicationInitializer</span><span class="o">.</span><span class="na">class</span><span class="o">)</span>
+<span class="kd">public</span> <span class="kd">class</span> <span class="nc">SpringServletContainerInitializer</span> <span class="kd">implements</span> <span class="n">ServletContainerInitializer</span> <span class="o">{</span>
+
+	<span class="nd">@Override</span>
+	<span class="kd">public</span> <span class="kt">void</span> <span class="nf">onStartup</span><span class="o">(</span><span class="n">Set</span><span class="o">&lt;</span><span class="n">Class</span><span class="o">&lt;?&gt;&gt;</span> <span class="n">webAppInitializerClasses</span><span class="o">,</span> <span class="n">ServletContext</span> <span class="n">servletContext</span><span class="o">)</span>
+			<span class="kd">throws</span> <span class="n">ServletException</span> <span class="o">{</span>
+
+		<span class="n">List</span><span class="o">&lt;</span><span class="n">WebApplicationInitializer</span><span class="o">&gt;</span> <span class="n">initializers</span> <span class="o">=</span> <span class="k">new</span> <span class="n">LinkedList</span><span class="o">&lt;</span><span class="n">WebApplicationInitializer</span><span class="o">&gt;();</span>
+
+		<span class="k">if</span> <span class="o">(</span><span class="n">webAppInitializerClasses</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="k">for</span> <span class="o">(</span><span class="n">Class</span><span class="o">&lt;?&gt;</span> <span class="n">waiClass</span> <span class="o">:</span> <span class="n">webAppInitializerClasses</span><span class="o">)</span> <span class="o">{</span>
+				<span class="c1">// Be defensive: Some servlet containers provide us with invalid classes,</span>
+				<span class="c1">// no matter what @HandlesTypes says...</span>
+				<span class="k">if</span> <span class="o">(!</span><span class="n">waiClass</span><span class="o">.</span><span class="na">isInterface</span><span class="o">()</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="n">Modifier</span><span class="o">.</span><span class="na">isAbstract</span><span class="o">(</span><span class="n">waiClass</span><span class="o">.</span><span class="na">getModifiers</span><span class="o">())</span> <span class="o">&amp;&amp;</span>
+						<span class="n">WebApplicationInitializer</span><span class="o">.</span><span class="na">class</span><span class="o">.</span><span class="na">isAssignableFrom</span><span class="o">(</span><span class="n">waiClass</span><span class="o">))</span> <span class="o">{</span>
+					<span class="k">try</span> <span class="o">{</span>
+						<span class="n">initializers</span><span class="o">.</span><span class="na">add</span><span class="o">((</span><span class="n">WebApplicationInitializer</span><span class="o">)</span> <span class="n">waiClass</span><span class="o">.</span><span class="na">newInstance</span><span class="o">());</span>
+					<span class="o">}</span>
+					<span class="k">catch</span> <span class="o">(</span><span class="n">Throwable</span> <span class="n">ex</span><span class="o">)</span> <span class="o">{</span>
+						<span class="k">throw</span> <span class="k">new</span> <span class="nf">ServletException</span><span class="o">(</span><span class="s">"Failed to instantiate WebApplicationInitializer class"</span><span class="o">,</span> <span class="n">ex</span><span class="o">);</span>
+					<span class="o">}</span>
+				<span class="o">}</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+
+		<span class="k">if</span> <span class="o">(</span><span class="n">initializers</span><span class="o">.</span><span class="na">isEmpty</span><span class="o">())</span> <span class="o">{</span>
+			<span class="n">servletContext</span><span class="o">.</span><span class="na">log</span><span class="o">(</span><span class="s">"No Spring WebApplicationInitializer types detected on classpath"</span><span class="o">);</span>
+			<span class="k">return</span><span class="o">;</span>
+		<span class="o">}</span>
+
+		<span class="n">servletContext</span><span class="o">.</span><span class="na">log</span><span class="o">(</span><span class="n">initializers</span><span class="o">.</span><span class="na">size</span><span class="o">()</span> <span class="o">+</span> <span class="s">" Spring WebApplicationInitializers detected on classpath"</span><span class="o">);</span>
+		<span class="n">AnnotationAwareOrderComparator</span><span class="o">.</span><span class="na">sort</span><span class="o">(</span><span class="n">initializers</span><span class="o">);</span>
+		<span class="k">for</span> <span class="o">(</span><span class="n">WebApplicationInitializer</span> <span class="n">initializer</span> <span class="o">:</span> <span class="n">initializers</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">initializer</span><span class="o">.</span><span class="na">onStartup</span><span class="o">(</span><span class="n">servleContext</span><span class="o">);</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+
+<span class="o">}</span>
+</code></pre></div></div>
+
+<p>上面的代码功能比较明确，针对每一个传入的 <strong>WebApplicationInitializer</strong> 的实现类进行实例化，然后将这些实例化的对象进行排序操作。排序的规则是</p>
+
+<blockquote>
+  <p>如果类带有 <strong>org.springframework.core.annotation.Order</strong> 标签，则获取对应的Order值，如果类实现 <strong>org.springframework.core.Ordered</strong> 接口，则调用getOrder方法获取Order值，如果都没有则为最低Order值。获取所有实例的Order值后，根据Order值进行排序。</p>
+</blockquote>
+
+<p>排序好后，依次调用实例的onStartup方法进行初始化。</p>
+
+<p><strong>SpringServletContainerInitialize</strong> 作为SpringMVC初始化的入口，最终的实现依赖于 <strong>WebApplicationInitializer</strong> 的实现类 <strong>AbstractAnnotationConfigDispatcherServletInitializer</strong> ，</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kd">public</span> <span class="kd">abstract</span> <span class="kd">class</span> <span class="nc">AbstractAnnotationConfigDispatcherServletInitializer</span>
+		<span class="kd">extends</span> <span class="n">AbstractDispatcherServletInitializer</span> <span class="o">{</span>
+
+	<span class="cm">/**
+	 * {@inheritDoc}
+	 * &lt;p&gt;This implementation creates an {@link AnnotationConfigWebApplicationContext},
+	 * providing it the annotated classes returned by {@link #getRootConfigClasses()}.
+	 * Returns {@code null} if {@link #getRootConfigClasses()} returns {@code null}.
+	 */</span>
+	<span class="nd">@Override</span>
+	<span class="kd">protected</span> <span class="n">WebApplicationContext</span> <span class="nf">createRootApplicationContext</span><span class="o">()</span> <span class="o">{</span>
+		<span class="n">Class</span><span class="o">&lt;?&gt;[]</span> <span class="n">configClasses</span> <span class="o">=</span> <span class="n">getRootConfigClasses</span><span class="o">();</span>
+		<span class="k">if</span> <span class="o">(!</span><span class="n">ObjectUtils</span><span class="o">.</span><span class="na">isEmpty</span><span class="o">(</span><span class="n">configClasses</span><span class="o">))</span> <span class="o">{</span>
+			<span class="n">AnnotationConfigWebApplicationContext</span> <span class="n">rootAppContext</span> <span class="o">=</span> <span class="k">new</span> <span class="n">AnnotationConfigWebApplicationContext</span><span class="o">();</span>
+			<span class="n">rootAppContext</span><span class="o">.</span><span class="na">register</span><span class="o">(</span><span class="n">configClasses</span><span class="o">);</span>
+			<span class="k">return</span> <span class="n">rootAppContext</span><span class="o">;</span>
+		<span class="o">}</span>
+		<span class="k">else</span> <span class="o">{</span>
+			<span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+
+	<span class="cm">/**
+	 * {@inheritDoc}
+	 * &lt;p&gt;This implementation creates an {@link AnnotationConfigWebApplicationContext},
+	 * providing it the annotated classes returned by {@link #getServletConfigClasses()}.
+	 */</span>
+	<span class="nd">@Override</span>
+	<span class="kd">protected</span> <span class="n">WebApplicationContext</span> <span class="nf">createServletApplicationContext</span><span class="o">()</span> <span class="o">{</span>
+		<span class="n">AnnotationConfigWebApplicationContext</span> <span class="n">servletAppContext</span> <span class="o">=</span> <span class="k">new</span> <span class="n">AnnotationConfigWebApplicationContext</span><span class="o">();</span>
+		<span class="n">Class</span><span class="o">&lt;?&gt;[]</span> <span class="n">configClasses</span> <span class="o">=</span> <span class="n">getServletConfigClasses</span><span class="o">();</span>
+		<span class="k">if</span> <span class="o">(!</span><span class="n">ObjectUtils</span><span class="o">.</span><span class="na">isEmpty</span><span class="o">(</span><span class="n">configClasses</span><span class="o">))</span> <span class="o">{</span>
+			<span class="n">servletAppContext</span><span class="o">.</span><span class="na">register</span><span class="o">(</span><span class="n">configClasses</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">return</span> <span class="n">servletAppContext</span><span class="o">;</span>
+	<span class="o">}</span>
+
+	<span class="cm">/**
+	 * Specify {@link org.springframework.context.annotation.Configuration @Configuration}
+	 * and/or {@link org.springframework.stereotype.Component @Component} classes to be
+	 * provided to the {@linkplain #createRootApplicationContext() root application context}.
+	 * @return the configuration classes for the root application context, or {@code null}
+	 * if creation and registration of a root context is not desired
+	 */</span>
+	<span class="kd">protected</span> <span class="kd">abstract</span> <span class="n">Class</span><span class="o">&lt;?&gt;[]</span> <span class="n">getRootConfigClasses</span><span class="o">();</span>
+
+	<span class="cm">/**
+	 * Specify {@link org.springframework.context.annotation.Configuration @Configuration}
+	 * and/or {@link org.springframework.stereotype.Component @Component} classes to be
+	 * provided to the {@linkplain #createServletApplicationContext() dispatcher servlet
+	 * application context}.
+	 * @return the configuration classes for the dispatcher servlet application context or
+	 * {@code null} if all configuration is specified through root config classes.
+	 */</span>
+	<span class="kd">protected</span> <span class="kd">abstract</span> <span class="n">Class</span><span class="o">&lt;?&gt;[]</span> <span class="n">getServletConfigClasses</span><span class="o">();</span>
+
+<span class="o">}</span>
+</code></pre></div></div>
+<p>该类提供了两个抽象方法 <strong>getRootConfigClasses</strong> 和 <strong>getServletConfigClasses</strong> ，前者用于获取创建RootApplicationContext的配置，后者用于获取创建ServletApplicationContext的配置。另外两个方法 <strong>createRootApplicationContext</strong> ，<strong>createServletApplicationContext</strong> 用于创建RootApplicationContext和ServletApplicationContext。这个类的入口onStartup在其父类 <strong>AbstractDispatcherServletInitializer</strong> 中。</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="nd">@Override</span>
+	<span class="kd">public</span> <span class="kt">void</span> <span class="nf">onStartup</span><span class="o">(</span><span class="n">ServletContext</span> <span class="n">servletContext</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">ServletException</span> <span class="o">{</span>
+		<span class="kd">super</span><span class="o">.</span><span class="na">onStartup</span><span class="o">(</span><span class="n">servletContext</span><span class="o">);</span>
+		<span class="n">registerDispatcherServlet</span><span class="o">(</span><span class="n">servletContext</span><span class="o">);</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+
+<p>onStartup会首先调用其父类 <strong>AbstractContextLoaderInitializer</strong> 的onStartup方法进行初始化，</p>
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="nd">@Override</span>
+	<span class="kd">public</span> <span class="kt">void</span> <span class="nf">onStartup</span><span class="o">(</span><span class="n">ServletContext</span> <span class="n">servletContext</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">ServletException</span> <span class="o">{</span>
+		<span class="n">registerContextLoaderListener</span><span class="o">(</span><span class="n">servletContext</span><span class="o">);</span>
+	<span class="o">}</span>
+
+	<span class="kd">protected</span> <span class="kt">void</span> <span class="nf">registerContextLoaderListener</span><span class="o">(</span><span class="n">ServletContext</span> <span class="n">servletContext</span><span class="o">)</span> <span class="o">{</span>
+		<span class="n">WebApplicationContext</span> <span class="n">rootAppContext</span> <span class="o">=</span> <span class="n">createRootApplicationContext</span><span class="o">();</span>
+		<span class="k">if</span> <span class="o">(</span><span class="n">rootAppContext</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+			<span class="n">ContextLoaderListener</span> <span class="n">listener</span> <span class="o">=</span> <span class="k">new</span> <span class="n">ContextLoaderListener</span><span class="o">(</span><span class="n">rootAppContext</span><span class="o">);</span>
+			<span class="n">listener</span><span class="o">.</span><span class="na">setContextInitializers</span><span class="o">(</span><span class="n">getRootApplicationContextInitializers</span><span class="o">());</span>
+			<span class="n">servletContext</span><span class="o">.</span><span class="na">addListener</span><span class="o">(</span><span class="n">listener</span><span class="o">);</span>
+		<span class="o">}</span>
+		<span class="k">else</span> <span class="o">{</span>
+			<span class="n">logger</span><span class="o">.</span><span class="na">debug</span><span class="o">(</span><span class="s">"No ContextLoaderListener registered, as "</span> <span class="o">+</span>
+					<span class="s">"createRootApplicationContext() did not return an application context"</span><span class="o">);</span>
+		<span class="o">}</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+<p><strong>AbstractContextLoaderInitializer</strong> 的onStartup主要用于初始化RootApplicationContext。在RootApplicationContext初始化好后，<strong>AbstractDispatcherServletInitializer</strong> 会继续初始化DispatcherServlet。</p>
+
+<div class="language-java highlighter-rouge"><div class="highlight"><pre class="highlight"><code>	<span class="kd">protected</span> <span class="kt">void</span> <span class="nf">registerDispatcherServlet</span><span class="o">(</span><span class="n">ServletContext</span> <span class="n">servletContext</span><span class="o">)</span> <span class="o">{</span>
+		<span class="n">String</span> <span class="n">servletName</span> <span class="o">=</span> <span class="n">getServletName</span><span class="o">();</span>
+		<span class="n">Assert</span><span class="o">.</span><span class="na">hasLength</span><span class="o">(</span><span class="n">servletName</span><span class="o">,</span> <span class="s">"getServletName() must not return empty or null"</span><span class="o">);</span>
+
+		<span class="n">WebApplicationContext</span> <span class="n">servletAppContext</span> <span class="o">=</span> <span class="n">createServletApplicationContext</span><span class="o">();</span>
+		<span class="n">Assert</span><span class="o">.</span><span class="na">notNull</span><span class="o">(</span><span class="n">servletAppContext</span><span class="o">,</span>
+				<span class="s">"createServletApplicationContext() did not return an application "</span> <span class="o">+</span>
+				<span class="s">"context for servlet ["</span> <span class="o">+</span> <span class="n">servletName</span> <span class="o">+</span> <span class="s">"]"</span><span class="o">);</span>
+
+		<span class="n">FrameworkServlet</span> <span class="n">dispatcherServlet</span> <span class="o">=</span> <span class="n">createDispatcherServlet</span><span class="o">(</span><span class="n">servletAppContext</span><span class="o">);</span>
+		<span class="n">dispatcherServlet</span><span class="o">.</span><span class="na">setContextInitializers</span><span class="o">(</span><span class="n">getServletApplicationContextInitializers</span><span class="o">());</span>
+
+		<span class="n">ServletRegistration</span><span class="o">.</span><span class="na">Dynamic</span> <span class="n">registration</span> <span class="o">=</span> <span class="n">servletContext</span><span class="o">.</span><span class="na">addServlet</span><span class="o">(</span><span class="n">servletName</span><span class="o">,</span> <span class="n">dispatcherServlet</span><span class="o">);</span>
+		<span class="n">Assert</span><span class="o">.</span><span class="na">notNull</span><span class="o">(</span><span class="n">registration</span><span class="o">,</span>
+				<span class="s">"Failed to register servlet with name '"</span> <span class="o">+</span> <span class="n">servletName</span> <span class="o">+</span> <span class="s">"'."</span> <span class="o">+</span>
+				<span class="s">"Check if there is another servlet registered under the same name."</span><span class="o">);</span>
+
+		<span class="n">registration</span><span class="o">.</span><span class="na">setLoadOnStartup</span><span class="o">(</span><span class="mi">1</span><span class="o">);</span>
+		<span class="n">registration</span><span class="o">.</span><span class="na">addMapping</span><span class="o">(</span><span class="n">getServletMappings</span><span class="o">());</span>
+		<span class="n">registration</span><span class="o">.</span><span class="na">setAsyncSupported</span><span class="o">(</span><span class="n">isAsyncSupported</span><span class="o">());</span>
+
+		<span class="n">Filter</span><span class="o">[]</span> <span class="n">filters</span> <span class="o">=</span> <span class="n">getServletFilters</span><span class="o">();</span>
+		<span class="k">if</span> <span class="o">(!</span><span class="n">ObjectUtils</span><span class="o">.</span><span class="na">isEmpty</span><span class="o">(</span><span class="n">filters</span><span class="o">))</span> <span class="o">{</span>
+			<span class="k">for</span> <span class="o">(</span><span class="n">Filter</span> <span class="n">filter</span> <span class="o">:</span> <span class="n">filters</span><span class="o">)</span> <span class="o">{</span>
+				<span class="n">registerServletFilter</span><span class="o">(</span><span class="n">servletContext</span><span class="o">,</span> <span class="n">filter</span><span class="o">);</span>
+			<span class="o">}</span>
+		<span class="o">}</span>
+
+		<span class="n">customizeRegistration</span><span class="o">(</span><span class="n">registration</span><span class="o">);</span>
+	<span class="o">}</span>
+</code></pre></div></div>
+
+<p><strong>registerDispatcherServlet</strong> 调用 <strong>createServletApplicationContext</strong> 创建ServletApplicationContext，然后创建DispatcherServlet，设置ServletMapping，然后注册Filter。</p>
+
+<p>经过上面的流程，SpringMVC的加载过程就完成了后续的请求处理就和通过web.xml启动的SpringMVC一样了。</p>
