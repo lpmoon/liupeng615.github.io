@@ -357,7 +357,7 @@ fi</span>
 
         <span class="c">### 检查对应的容器是否启动成功</span>
 
-        <span class="nv">DOCKERPID</span><span class="o">=</span><span class="k">$(</span>docker inspect <span class="nt">--format</span><span class="o">=</span><span class="s1">''</span> <span class="s2">"</span><span class="nv">$GUESTNAME</span><span class="s2">"</span><span class="k">)</span>
+        <span class="nv">DOCKERPID</span><span class="o">=</span><span class="k">$(</span>docker inspect <span class="nt">--format</span><span class="o">=</span><span class="s1">'\{\{ .State.Pid \}\}'</span> <span class="s2">"</span><span class="nv">$GUESTNAME</span><span class="s2">"</span><span class="k">)</span>
 
         <span class="o">[</span> <span class="s2">"</span><span class="nv">$DOCKERPID</span><span class="s2">"</span> <span class="o">!=</span> 0 <span class="o">]</span> &amp;amp<span class="p">;</span>&amp;amp<span class="p">;</span> <span class="nb">break
 

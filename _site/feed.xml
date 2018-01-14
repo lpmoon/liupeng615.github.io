@@ -3,8 +3,8 @@
 	<channel>
 		<title>lpmoon</title>
 		<description>Welcome to my blog！</description>
-		<link>http://localhost:4000/</link>
-		<atom:link href="http://localhost:4000//feed.xml" rel="self" type="application/rss+xml" />
+		<link>http://localhost:4000</link>
+		<atom:link href="http://localhost:4000/feed.xml" rel="self" type="application/rss+xml" />
 		
 			<item>
 				<title>Lkd 5</title>
@@ -546,8 +546,8 @@ int 0x80            ; x86 call the kernel – sysenter is another entry point
 
 </description>
 				<pubDate>Sat, 13 Jan 2018 00:00:00 +0800</pubDate>
-				<link>http://localhost:4000//linux/2018/01/13/lkd-5.html</link>
-				<guid isPermaLink="true">http://localhost:4000//linux/2018/01/13/lkd-5.html</guid>
+				<link>http://localhost:4000/linux/2018/01/13/lkd-5.html</link>
+				<guid isPermaLink="true">http://localhost:4000/linux/2018/01/13/lkd-5.html</guid>
 			</item>
 		
 			<item>
@@ -1597,8 +1597,8 @@ int 0x80            ; x86 call the kernel – sysenter is another entry point
 &lt;h2 id=&quot;疑问和解决方案&quot;&gt;疑问和解决方案&lt;/h2&gt;
 </description>
 				<pubDate>Sat, 06 Jan 2018 00:00:00 +0800</pubDate>
-				<link>http://localhost:4000//linux/2018/01/06/lkd-4.html</link>
-				<guid isPermaLink="true">http://localhost:4000//linux/2018/01/06/lkd-4.html</guid>
+				<link>http://localhost:4000/linux/2018/01/06/lkd-4.html</link>
+				<guid isPermaLink="true">http://localhost:4000/linux/2018/01/06/lkd-4.html</guid>
 			</item>
 		
 			<item>
@@ -2196,8 +2196,8 @@ void exit_ptrace(struct task_struct *tracer)
 
 </description>
 				<pubDate>Sun, 31 Dec 2017 00:00:00 +0800</pubDate>
-				<link>http://localhost:4000//linux/2017/12/31/lkd-3.html</link>
-				<guid isPermaLink="true">http://localhost:4000//linux/2017/12/31/lkd-3.html</guid>
+				<link>http://localhost:4000/linux/2017/12/31/lkd-3.html</link>
+				<guid isPermaLink="true">http://localhost:4000/linux/2017/12/31/lkd-3.html</guid>
 			</item>
 		
 			<item>
@@ -2222,8 +2222,8 @@ void exit_ptrace(struct task_struct *tracer)
 &lt;/ul&gt;
 </description>
 				<pubDate>Sat, 30 Dec 2017 00:00:00 +0800</pubDate>
-				<link>http://localhost:4000//linux/2017/12/30/lkd-%E7%BF%BB%E8%AF%91.html</link>
-				<guid isPermaLink="true">http://localhost:4000//linux/2017/12/30/lkd-%E7%BF%BB%E8%AF%91.html</guid>
+				<link>http://localhost:4000/linux/2017/12/30/lkd-%E7%BF%BB%E8%AF%91.html</link>
+				<guid isPermaLink="true">http://localhost:4000/linux/2017/12/30/lkd-%E7%BF%BB%E8%AF%91.html</guid>
 			</item>
 		
 			<item>
@@ -2233,8 +2233,8 @@ void exit_ptrace(struct task_struct *tracer)
 &lt;p&gt;&lt;img src=&quot;/assets/images/互联网经典常规拓扑图.png&quot; alt=&quot;/assets/images/互联网经典常规拓扑图.png&quot; /&gt;&lt;/p&gt;
 </description>
 				<pubDate>Sat, 23 Dec 2017 00:00:00 +0800</pubDate>
-				<link>http://localhost:4000//arch/2017/12/23/%E5%BE%AE%E6%9C%8D%E5%8A%A1%E6%9E%B6%E6%9E%84%E5%9B%BE.html</link>
-				<guid isPermaLink="true">http://localhost:4000//arch/2017/12/23/%E5%BE%AE%E6%9C%8D%E5%8A%A1%E6%9E%B6%E6%9E%84%E5%9B%BE.html</guid>
+				<link>http://localhost:4000/arch/2017/12/23/%E5%BE%AE%E6%9C%8D%E5%8A%A1%E6%9E%B6%E6%9E%84%E5%9B%BE.html</link>
+				<guid isPermaLink="true">http://localhost:4000/arch/2017/12/23/%E5%BE%AE%E6%9C%8D%E5%8A%A1%E6%9E%B6%E6%9E%84%E5%9B%BE.html</guid>
 			</item>
 		
 			<item>
@@ -2427,8 +2427,8 @@ void exit_ptrace(struct task_struct *tracer)
 &lt;p&gt;经过上面的流程，SpringMVC的加载过程就完成了后续的请求处理就和通过web.xml启动的SpringMVC一样了。&lt;/p&gt;
 </description>
 				<pubDate>Sun, 26 Nov 2017 00:00:00 +0800</pubDate>
-				<link>http://localhost:4000//spring/2017/11/26/SpringMVC%E7%9A%84%E5%90%AF%E5%8A%A8.html</link>
-				<guid isPermaLink="true">http://localhost:4000//spring/2017/11/26/SpringMVC%E7%9A%84%E5%90%AF%E5%8A%A8.html</guid>
+				<link>http://localhost:4000/spring/2017/11/26/SpringMVC%E7%9A%84%E5%90%AF%E5%8A%A8.html</link>
+				<guid isPermaLink="true">http://localhost:4000/spring/2017/11/26/SpringMVC%E7%9A%84%E5%90%AF%E5%8A%A8.html</guid>
 			</item>
 		
 			<item>
@@ -2809,8 +2809,8 @@ class Schedule1Child
 https://github.com/lpmoon/spring-extension&lt;/p&gt;
 </description>
 				<pubDate>Sat, 25 Nov 2017 00:00:00 +0800</pubDate>
-				<link>http://localhost:4000//spring/2017/11/25/spring@Scheduled%E6%89%A9%E5%B1%95.html</link>
-				<guid isPermaLink="true">http://localhost:4000//spring/2017/11/25/spring@Scheduled%E6%89%A9%E5%B1%95.html</guid>
+				<link>http://localhost:4000/spring/2017/11/25/spring@Scheduled%E6%89%A9%E5%B1%95.html</link>
+				<guid isPermaLink="true">http://localhost:4000/spring/2017/11/25/spring@Scheduled%E6%89%A9%E5%B1%95.html</guid>
 			</item>
 		
 			<item>
@@ -2843,8 +2843,8 @@ https://github.com/lpmoon/spring-extension&lt;/p&gt;
 &lt;p&gt;总而言之，当我们遇到问题的时候，应该多思考，很多时候只要你做到适当的抽象，问题往往会迎刃而解。。&lt;/p&gt;
 </description>
 				<pubDate>Sun, 19 Nov 2017 00:00:00 +0800</pubDate>
-				<link>http://localhost:4000//thinking/2017/11/19/%E7%94%B1%E4%B8%80%E6%AC%A1%E9%9D%A2%E8%AF%95%E5%BC%95%E8%B5%B7%E7%9A%84%E6%80%9D%E8%80%83.html</link>
-				<guid isPermaLink="true">http://localhost:4000//thinking/2017/11/19/%E7%94%B1%E4%B8%80%E6%AC%A1%E9%9D%A2%E8%AF%95%E5%BC%95%E8%B5%B7%E7%9A%84%E6%80%9D%E8%80%83.html</guid>
+				<link>http://localhost:4000/thinking/2017/11/19/%E7%94%B1%E4%B8%80%E6%AC%A1%E9%9D%A2%E8%AF%95%E5%BC%95%E8%B5%B7%E7%9A%84%E6%80%9D%E8%80%83.html</link>
+				<guid isPermaLink="true">http://localhost:4000/thinking/2017/11/19/%E7%94%B1%E4%B8%80%E6%AC%A1%E9%9D%A2%E8%AF%95%E5%BC%95%E8%B5%B7%E7%9A%84%E6%80%9D%E8%80%83.html</guid>
 			</item>
 		
 			<item>
@@ -3094,8 +3094,8 @@ sun.boot.library.path -&amp;gt; /Library/Java/JavaVirtualMachines/jdk1.8.0_111.j
 
 </description>
 				<pubDate>Sat, 18 Nov 2017 00:00:00 +0800</pubDate>
-				<link>http://localhost:4000//spring/2017/11/18/spring%E8%87%AA%E5%AE%9A%E4%B9%89%E6%A0%87%E7%AD%BE.html</link>
-				<guid isPermaLink="true">http://localhost:4000//spring/2017/11/18/spring%E8%87%AA%E5%AE%9A%E4%B9%89%E6%A0%87%E7%AD%BE.html</guid>
+				<link>http://localhost:4000/spring/2017/11/18/spring%E8%87%AA%E5%AE%9A%E4%B9%89%E6%A0%87%E7%AD%BE.html</link>
+				<guid isPermaLink="true">http://localhost:4000/spring/2017/11/18/spring%E8%87%AA%E5%AE%9A%E4%B9%89%E6%A0%87%E7%AD%BE.html</guid>
 			</item>
 		
 			<item>
@@ -3834,8 +3834,8 @@ sun.boot.library.path -&amp;gt; /Library/Java/JavaVirtualMachines/jdk1.8.0_111.j
 
 </description>
 				<pubDate>Fri, 13 Oct 2017 00:00:00 +0800</pubDate>
-				<link>http://localhost:4000//spring/2017/10/13/spring%E5%8A%A0%E8%BD%BD%E8%BF%87%E7%A8%8B.html</link>
-				<guid isPermaLink="true">http://localhost:4000//spring/2017/10/13/spring%E5%8A%A0%E8%BD%BD%E8%BF%87%E7%A8%8B.html</guid>
+				<link>http://localhost:4000/spring/2017/10/13/spring%E5%8A%A0%E8%BD%BD%E8%BF%87%E7%A8%8B.html</link>
+				<guid isPermaLink="true">http://localhost:4000/spring/2017/10/13/spring%E5%8A%A0%E8%BD%BD%E8%BF%87%E7%A8%8B.html</guid>
 			</item>
 		
 	</channel>
