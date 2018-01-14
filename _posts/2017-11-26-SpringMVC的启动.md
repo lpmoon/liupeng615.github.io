@@ -18,7 +18,7 @@ tags: Spring
 从上面javadoc的注释可以看出，当应用启动的时候，如果有 **ServletContainerInitializer** 的实现类并且有相应的配置，则会使用该类作为web的入口。
 
 SpringMVC新的启动方式正是基于上面提到的 **ServletContainerInitializer** 接口，其实现类是 **SpringServletContainerInitializer** ，下面看看该类的实现，
-```
+```java
 @HandlesTypes(WebApplicationInitializer.class)
 public class SpringServletContainerInitializer implements ServletContainerInitializer {
 
@@ -67,7 +67,7 @@ public class SpringServletContainerInitializer implements ServletContainerInitia
 
 **SpringServletContainerInitialize** 作为SpringMVC初始化的入口，最终的实现依赖于 **WebApplicationInitializer** 的实现类 **AbstractAnnotationConfigDispatcherServletInitializer** ，
 
-```
+```java
 public abstract class AbstractAnnotationConfigDispatcherServletInitializer
 		extends AbstractDispatcherServletInitializer {
 
@@ -127,7 +127,7 @@ public abstract class AbstractAnnotationConfigDispatcherServletInitializer
 }
 ```
 该类提供了两个抽象方法 **getRootConfigClasses** 和 **getServletConfigClasses** ，前者用于获取创建RootApplicationContext的配置，后者用于获取创建ServletApplicationContext的配置。另外两个方法 **createRootApplicationContext** ，**createServletApplicationContext** 用于创建RootApplicationContext和ServletApplicationContext。这个类的入口onStartup在其父类 **AbstractDispatcherServletInitializer** 中。
-```
+```java
 	@Override
 	public void onStartup(ServletContext servletContext) throws ServletException {
 		super.onStartup(servletContext);
@@ -136,7 +136,7 @@ public abstract class AbstractAnnotationConfigDispatcherServletInitializer
 ```
 
 onStartup会首先调用其父类 **AbstractContextLoaderInitializer** 的onStartup方法进行初始化，
-```
+```java
 	@Override
 	public void onStartup(ServletContext servletContext) throws ServletException {
 		registerContextLoaderListener(servletContext);
@@ -157,7 +157,7 @@ onStartup会首先调用其父类 **AbstractContextLoaderInitializer** 的onStar
 ```
 **AbstractContextLoaderInitializer** 的onStartup主要用于初始化RootApplicationContext。在RootApplicationContext初始化好后，**AbstractDispatcherServletInitializer** 会继续初始化DispatcherServlet。
 
-```
+```java
 	protected void registerDispatcherServlet(ServletContext servletContext) {
 		String servletName = getServletName();
 		Assert.hasLength(servletName, "getServletName() must not return empty or null");
