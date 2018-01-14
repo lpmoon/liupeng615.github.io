@@ -2,6 +2,15 @@
 categories: Tomcat
 tags: Tomcat
 ---
+<!-- TOC -->
+
+- [connector简介](#connector简介)
+- [connector实现](#connector实现)
+    - [init](#init)
+    - [start](#start)
+
+<!-- /TOC -->
+# connector简介
 
 tomcat作为web容器，在处理高并发连接方面有着优异的性能，而这都与其精巧的代码架构及实现有关。tomcat将处理请求的整个组件抽象为一个connector，这个connector在tomcat的整个生命周期中负责接受连接，处理请求，返回结果等。比如下面的代码定义了一个处理http请求的connector，
 
@@ -27,7 +36,7 @@ tomcat作为web容器，在处理高并发连接方面有着优异的性能，�
 
 除了这些connector还需要什么，它具体是怎么工作的呢？为了弄明白这些，需要深入到connector的具体实现中，
 
-
+# connector实现
 
 ```
 
@@ -85,7 +94,7 @@ connector实例化的时候会根据配置的protocolHandlerClassName初始化pr
 
 4. destroy
 
-
+## init
 
 connector的init过程通过initInternal实现，initInternal最主要的工作是调用protocolHandler的init方法，protocolHandler在connector实例化的时候被初始化。protocolHandler的初始化主要分为两步，
 
@@ -99,7 +108,7 @@ connector的init过程通过initInternal实现，initInternal最主要的工作�
 
 
 
-```
+```java
 
     public void init() throws Exception {
 
@@ -117,7 +126,7 @@ connector的init过程通过initInternal实现，initInternal最主要的工作�
 
 具体的绑定操作由具体的实现类来定义，以下是Nio2Endpoint的实现，
 
-```
+```java
 
    public void bind() throws Exception {
 
@@ -187,9 +196,13 @@ connector的init过程通过initInternal实现，initInternal最主要的工作�
 
 
 
-到这里connector的初始化完成，下面就会进入到启动阶段。connector的启动阶段依然延续了init的老套路，connector->protocolHanlder->endpoint，最终还是会进入到Nio2Endpoint的startInternal, 
+到这里connector的初始化完成，下面就会进入到启动阶段。
 
-```
+## start
+
+connector的启动阶段依然延续了init的老套路，connector->protocolHanlder->endpoint，最终还是会进入到Nio2Endpoint的startInternal, 
+
+```java
 
     /**
 
@@ -255,7 +268,7 @@ connector的init过程通过initInternal实现，initInternal最主要的工作�
 
 启动acceptor的线程的操作如下所示，
 
-```
+```java
 
     protected final void startAcceptorThreads() {
 
@@ -291,7 +304,7 @@ acceptor线程的具体定义在Nio2Endpoint中，其具体实现比较长，我
 
 * 如果线程被暂停，则需要进入内层的while循环，为了防止线程空转耗费cpu，线程每50ms被唤醒一次重新检查线程是否被启动
 
-```
+```java
 
                 // Loop if endpoint is paused
 
@@ -327,7 +340,7 @@ acceptor线程的具体定义在Nio2Endpoint中，其具体实现比较长，我
 
 * 对计数器进行加一操作，接受新的连接
 
-```
+```java
 
                     //if we have reached max connections, wait
 
@@ -379,7 +392,7 @@ acceptor线程的具体定义在Nio2Endpoint中，其具体实现比较长，我
 
 * 处理新的连接
 
-```
+```java
 
                     // Configure the socket
 
@@ -405,7 +418,7 @@ acceptor线程的具体定义在Nio2Endpoint中，其具体实现比较长，我
 
 具体的操作在setSocketOptions中，
 
-```
+```java
 
     protected boolean setSocketOptions(AsynchronousSocketChannel socket) {
 
@@ -481,7 +494,7 @@ acceptor线程的具体定义在Nio2Endpoint中，其具体实现比较长，我
 
 首先会设置socket的一些属性，然后封装成为socketWrapper，socketWrapper包含了多个handler，分别用于读取数据完毕，写入数据完毕后的回调操作。最后调用processSocket开始处理。processSocket会将socketWrapper和event(此时为SocketEvent.OPEN_READ)封装成SocketProcessorBase，放入到线程池中执行。
 
-```
+```java
 
 public boolean processSocket(SocketWrapperBase<S> socketWrapper,
 
@@ -547,7 +560,7 @@ public boolean processSocket(SocketWrapperBase<S> socketWrapper,
 
 SocketProcessorBase的初始化由createSocketProcessor完成，而createSocketProcessor的具体定义在Nio2Endpoint中，
 
-```
+```java
 
     @Override
 
@@ -563,7 +576,7 @@ SocketProcessorBase的初始化由createSocketProcessor完成，而createSocketP
 
 SocketProcessor中最主要的步骤是获取handler，然后调用handler的process方法。
 
-```
+```java
 
                 if (handshake == 0) {
 
@@ -623,7 +636,7 @@ SocketProcessor中最主要的步骤是获取handler，然后调用handler的pro
 
 这个handler是ConnectionHandler的实例，handler的process代码很长，这里删除一些对主流程影响不是很大的代码，
 
-```
+```java
 
       @Override
 

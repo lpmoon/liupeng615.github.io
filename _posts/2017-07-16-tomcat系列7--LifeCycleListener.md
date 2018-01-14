@@ -3,8 +3,20 @@ categories: Tomcat
 tags: Tomcat
 ---
 
+<!-- TOC -->
+
+- [ThreadLocalLeakPreventionListener](#threadlocalleakpreventionlistener)
+- [EngineConfig](#engineconfig)
+- [HostConfig](#hostconfig)
+- [JreMemoryLeakPreventionListener](#jrememoryleakpreventionlistener)
+- [GlobalResourcesLifecycleListener](#globalresourceslifecyclelistener)
+- [VersionLoggerListener](#versionloggerlistener)
+- [SecurityListener](#securitylistener)
+- [自定义Listener](#自定义listener)
+
+<!-- /TOC -->
 LifecycleListener用于定义生命周期事件监听器，监听的时间包括组件启动和停止等。LifecycleListener的定义如下，
-···
+```java
 public interface LifecycleListener {
 
 
@@ -17,9 +29,9 @@ public interface LifecycleListener {
 
 
 }
-···
-生命周期的各个阶段的定义位于Lifecycle中，各个阶段的状态转移如下所示，
 ```
+生命周期的各个阶段的定义位于Lifecycle中，各个阶段的状态转移如下所示，
+```java
  *            start()
  *  -----------------------------
  *  |                           |
@@ -50,7 +62,7 @@ public interface LifecycleListener {
  * ----»-----------------------------»------------------------------
 ```
 在大多数情况下tomcat中的组件出现生命周期迁移都会触发LifecycleBase的fireLifecycleEvent方法，该方法内部依次调用当前组件的各个listener的lifecycleEvent，
-```
+```java
     protected void fireLifecycleEvent(String type, Object data) {
         LifecycleEvent event = new LifecycleEvent(this, type, data);
         for (LifecycleListener listener : lifecycleListeners) {
@@ -59,7 +71,7 @@ public interface LifecycleListener {
     }
 ```
 Listener的定义需要在server.xml中，并且位于```<Server></Server>```标签内部，比如
-```
+```xml
 <Server port="8005" shutdown="SHUTDOWN">
   <Listener className="org.apache.catalina.startup.VersionLoggerListener" />
   <!-- Security listener. Documentation at /docs/config/listeners.html
@@ -81,7 +93,7 @@ Listener的定义需要在server.xml中，并且位于```<Server></Server>```标
 
 # ThreadLocalLeakPreventionListener
 当Context停止的时候会调用到ThreadLocalLeakPreventionListener, 该Listener用于停止当前线程池中的所有线程，防止出现thread-local相关的内存泄漏。该Listener会调用stopIdleThreads方法，该方法内部会调用ThreadPoolExecutor的contextStopping方法停止所有线程。
-```
+```java
     public void contextStopping() {
         this.lastContextStoppedTime.set(System.currentTimeMillis());
 
@@ -123,7 +135,7 @@ Listener的定义需要在server.xml中，并且位于```<Server></Server>```标
 
 # HostConfig
 这个Listener一般由tomcat自动加载，不需要手工在server.xml中进行配置。该Listener位于StandardHost中，主要用来加载相关app(context)，
-```
+```java
     /**
      * Deploy applications for any directories or WAR files that are found
      * in our "application root" directory.
@@ -151,7 +163,7 @@ Listener的定义需要在server.xml中，并且位于```<Server></Server>```标
 
 用于创建全局的JNDI资源的Mbeans。
 
-```
+```java
     protected void createMBeans(String prefix, Context context)
         throws NamingException {
 
@@ -200,7 +212,7 @@ Listener的定义需要在server.xml中，并且位于```<Server></Server>```标
 
 # 自定义Listener
 
-```
+```java
 package org.apache.catalina.core;
 
 import org.apache.catalina.*;
@@ -337,7 +349,7 @@ public class TestListener implements LifecycleListener,
 ```
 
 上面的TestListener会作用于所有的Context，当Context被删除的时候打印相关日志。在server.xml中配置如下，
-```
+```xml
  <Listener className="org.apache.catalina.core.TestListener" />
 ```
 启动tomcat后删除一个context，日志会出现如下的数据，

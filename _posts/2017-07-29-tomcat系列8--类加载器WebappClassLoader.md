@@ -3,6 +3,17 @@ categories: Tomcat
 tags: Tomcat
 ---
 
+<!-- TOC -->
+
+- [从缓存查找](#从缓存查找)
+- [使用java的ExtClassLoader加载](#使用java的extclassloader加载)
+- [如果有需要则代理给父类加载器](#如果有需要则代理给父类加载器)
+- [搜索本地目录加载](#搜索本地目录加载)
+- [代理给父类加载器](#代理给父类加载器)
+- [总结](#总结)
+
+<!-- /TOC -->
+
 tomcat以Context作为基本单位部署应用，每个应用在tomcat中对应一个Context。为了使应用之间影响降到最低，每个应用都有自己的类加载器。java默认的类加载机制是父代理模式，也就是加载请求会一直往上代理给父加载器。但是tomcat默认的类加载器没有采用这种模式，下面来看一下tomcat默认的类加载器WebappClassLoader是如何实现的。
 
 整个过程可以大致分为下面的几个步骤，
@@ -16,7 +27,7 @@ tomcat以Context作为基本单位部署应用，每个应用在tomcat中对应�
 # 从缓存查找
 
 从缓存查找主要分为两步，一步是从当前的类加载器的内部缓存查找，另一步是从虚拟机的缓存中查找。
-```
+```java
             // (0) Check our previously loaded local class cache
             clazz = findLoadedClass0(name);
             if (clazz != null) {
@@ -38,7 +49,7 @@ tomcat以Context作为基本单位部署应用，每个应用在tomcat中对应�
             }
 ```
 WebAppClassLoader重写了findLoadedClass0方法，这样做好处是首先从类加载器的内部缓存查找对应的类，
-```
+```java
     protected Class<?> findLoadedClass0(String name) {
 
         String path = binaryNameToPath(name, true);
@@ -57,7 +68,7 @@ WebAppClassLoader重写了findLoadedClass0方法，这样做好处是首先从�
 # 使用java的ExtClassLoader加载
 
 这一步是为了防止WebappClassLoader覆盖Java SE的类。
-```
+```java
  ClassLoader javaseLoader = getJavaseClassLoader();
             boolean tryLoadingFromJavaseLoader;
             try {
@@ -93,7 +104,7 @@ WebAppClassLoader重写了findLoadedClass0方法，这样做好处是首先从�
 # 如果有需要则代理给父类加载器
 
 这一步首先会判断tomcat启动的时候是否设置了delgate属性，如果设置了则直接代理给父加载器，这里也就是URLClassLoader。如果没有设置这个属性，则会判断当前需要加载的类是否满足某些特性，如果满足也代理给父类加载器。这里的特性是指加载的类在下面的package中，
-```
+```java
 javax.el.*
 javax.servlet.*
 javax.websocket.*
