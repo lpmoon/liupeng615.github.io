@@ -173,7 +173,7 @@ JVM_ENTRY(void, JVM_Interrupt(JNIEnv* env, jobject jthread))
   }
 JVM_END
 ```
-之后会调用os::interrupt，
+之后会调用os::interrupt，
 
 ```
 void os::interrupt(Thread* thread) {
