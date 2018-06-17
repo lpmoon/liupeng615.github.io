@@ -149,10 +149,10 @@ JavaThread* java_lang_Thread::thread(oop java_thread) {
 4. 开始执行任务  
    Thread::start(native_thread)    
    1. 更新threadStatus，该状态用于防止并发start
-   2. Monitor* sync_with_child = osthread->startThread_lock();
-      MutexLockerEx ml(sync_with_child, Mutex::_no_safepoint_check_flag);
-      sync_with_child->notify();
-      唤起被阻塞的子线程
+   2. Monitor* sync_with_child = osthread->startThread_lock();  
+      MutexLockerEx ml(sync_with_child, Mutex::_no_safepoint_check_flag);  
+      sync_with_child->notify();  
+      唤起被阻塞的子线程  
 
 # 线程interrupt
 
