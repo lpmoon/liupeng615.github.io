@@ -126,7 +126,7 @@ if (java_lang_Thread::thread(JNIHandles::resolve_non_null(jthread)) != NULL) {
       throw_illegal_thread_state = true;
 }
 ```
-尽管jdk5之后引入了threadStatus来防止重入，但是由于jni attached的线程在对象创建和修改threadStatus之间有一个窗口，所以使用threadStataus来防重入不能完全满足要求。需要根据Thread中的eetop来判断是否重入。
+尽管jdk5之后引入了threadStatus来防止重入，但是由于jni attached的线程在对象创建和修改threadStatus之间有一个窗口，所以使用threadStataus来防重入不能完全满足要求。需要根据Thread中的eetop来判断是否重入。
 ```
 JavaThread* java_lang_Thread::thread(oop java_thread) {
   return (JavaThread*)java_thread->address_field(_eetop_offset);
@@ -202,7 +202,7 @@ void os::interrupt(Thread* thread) {
 }
 ```
 
-可以看到如果当前线程没有被interrupt，则设置中断标志位。同时线程的_SleepEvent不为空，则调用_SleepEvent->unpark()中断线程。如果是java线程，则调用parker的unpark方法中断线程。
+可以看到如果当前线程没有被interrupt，则设置中断标志位。同时线程的_SleepEvent不为空，则调用_SleepEvent->unpark()中断线程。如果是java线程，则调用parker的unpark方法中断线程。
 
 当调用Thread.Sleep()的时候线程通过_SleepEvent->park()挂起，
 当调用Object.wait()的时候线程通过_ParkEvent->park()挂起。
@@ -308,7 +308,7 @@ JVM_END
 
 # java线程在jvm中的表示
 
-线程在jvm最基础的抽象是Thread，其对应的子类包括
+线程在jvm最基础的抽象是Thread，其对应的子类包括
 1. JavaThread
 2. vmThread
 3. WatcherThread
