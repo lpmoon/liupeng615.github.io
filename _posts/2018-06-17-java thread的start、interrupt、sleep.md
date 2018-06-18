@@ -129,12 +129,12 @@ if (java_lang_Thread::thread(JNIHandles::resolve_non_null(jthread)) != NULL) {
       throw_illegal_thread_state = true;
 }
 ```
-为了防止并发问题，首先引入一个mutex锁，这个锁是全局的，也就是说在一定程度上线程的启动是串行的。这个锁的作用范围到Thread::start(native_thread)之前。当锁对象的作用于结束后，会在对象的析构方法中自动释放锁。
+为了防止并发问题，首先引入一个mutex锁，这个锁是全局的，也就是说在一定程度上线程的启动是串行的。这个锁的作用范围到Thread::start(native_thread)之前。当锁对象的作用于结束后，会在对象的析构方法中自动释放锁。
 
-如果当前线程成功获取了锁，会通过判断Thread的eetop这个字段来判断当前线程是否已经启动了。大家可能会想为什么不适用threadStatus来判断呢？上面代码的注释给出了原因:
+如果当前线程成功获取了锁，会通过判断Thread的eetop这个字段来判断当前线程是否已经启动了。大家可能会想为什么不适用threadStatus来判断呢？上面代码的注释给出了原因:
 > 由于jni attached的线程在对象创建和修改threadStatus之间有一个窗口，所以使用threadStataus来防重入不能完全满足要求。
 
-threadStatus的更新是在Thread::start(native_thread)中完成的，不在前面提到的锁的作用范围内，所以使用threadStatus可能存在并发问题。
+threadStatus的更新是在Thread::start(native_thread)中完成的，不在前面提到的锁的作用范围内，所以使用threadStatus可能存在并发问题。
   
 ```
 JavaThread* java_lang_Thread::thread(oop java_thread) {
@@ -143,7 +143,7 @@ JavaThread* java_lang_Thread::thread(oop java_thread) {
 ``` 
  
 ### 2.设置stacksize  
-从jdk中Thread的stackSize属性中获取栈大小，如果拿到的stacksize小于0则设置为0
+从jdk中Thread的stackSize属性中获取栈大小，如果拿到的stacksize小于0则设置为0
 
 ### 3. 初始化JavaThread  
 
