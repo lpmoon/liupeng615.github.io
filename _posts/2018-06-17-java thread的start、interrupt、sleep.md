@@ -1,5 +1,7 @@
 # 线程启动
 
+线程的启动分为两部分，一部分是jdk，另一部分是jvm。jdk部分负责基本的状态校验，实际的启动过程由jvm完成。
+
 ## jdk部分
 
 线程启动在jdk的实现很简单，
@@ -120,39 +122,75 @@ JVM_ENTRY(void, JVM_StartThread(JNIEnv* env, jobject jthread))
 JVM_END
 ```
 
-1. start防重入
+### 1. start防重入
 ```
+MutexLocker mu(Threads_lock);
 if (java_lang_Thread::thread(JNIHandles::resolve_non_null(jthread)) != NULL) {
       throw_illegal_thread_state = true;
 }
 ```
-尽管jdk5之后引入了threadStatus来防止重入，但是由于jni attached的线程在对象创建和修改threadStatus之间有一个窗口，所以使用threadStataus来防重入不能完全满足要求。需要根据Thread中的eetop来判断是否重入。
+为了防止并发问题，首先引入一个mutex锁，这个锁是全局的，也就是说在一定程度上线程的启动是串行的。这个锁的作用范围到Thread::start(native_thread)之前。当锁对象的作用于结束后，会在对象的析构方法中自动释放锁。
+
+如果当前线程成功获取了锁，会通过判断Thread的eetop这个字段来判断当前线程是否已经启动了。大家可能会想为什么不适用threadStatus来判断呢？上面代码的注释给出了原因:
+> 由于jni attached的线程在对象创建和修改threadStatus之间有一个窗口，所以使用threadStataus来防重入不能完全满足要求。
+
+threadStatus的更新是在Thread::start(native_thread)中完成的，不在前面提到的锁的作用范围内，所以使用threadStatus可能存在并发问题。
+  
 ```
 JavaThread* java_lang_Thread::thread(oop java_thread) {
   return (JavaThread*)java_thread->address_field(_eetop_offset);
 }
 ``` 
  
-2. 设置stacksize  
+### 2.设置stacksize  
 从jdk中Thread的stackSize属性中获取栈大小，如果拿到的stacksize小于0则设置为0
 
-3. 初始化JavaThread  
-    传入的任务入口为静态函数thread_entry。  
-    1. 设置thread_entry
-    2. 调用pthread_create创建线程，线程的入口是java_start。  
+### 3. 初始化JavaThread  
 
-    java_start会进行下面几个操作，  
-    1. 通过pthread_sigmask为当前线程屏蔽几个信号，包括SIGILL，SIGSEGV，SIGBUS等
-    2. 通知父进程已经初始化完成，然后等待父进程调用start_thread()
-    3. 等父进程调用start_thread()后，执行thread->run()，实际调用的是thread_entry。
+传入的任务入口为静态函数thread_entry。  
+1. 设置thread_entry
+2. 调用pthread_create创建线程，将tid存储在OSThread中，并且绑定JavaThread和OSThread之间的关系。线程的入口是java_start。
+3. 当前线程会等待子线程完成初始化操作 
+```c++
+Monitor* sync_with_child = osthread->startThread_lock();
+MutexLockerEx ml(sync_with_child, Mutex::_no_safepoint_check_flag);
+while ((state = osthread->get_state()) == ALLOCATED) {
+    sync_with_child->wait(Mutex::_no_safepoint_check_flag);  
+}  
+```
+只有等子线程的状态变为非ALLOCATED，父进程才会继续执行。
 
-4. 开始执行任务  
-   Thread::start(native_thread)    
-   1. 更新threadStatus，该状态用于防止并发start
-   2. Monitor* sync_with_child = osthread->startThread_lock();  
-      MutexLockerEx ml(sync_with_child, Mutex::_no_safepoint_check_flag);  
-      sync_with_child->notify();  
-      唤起被阻塞的子线程  
+java_start会进行下面几个操作，  
+1. 通过pthread_sigmask为当前线程屏蔽几个信号，包括SIGILL，SIGSEGV，SIGBUS等
+2. 通知父进程已经初始化完成，唤醒父进程。然后等待父进程调用start_thread()
+```
+// handshaking with parent thread
+  {
+    MutexLockerEx ml(sync, Mutex::_no_safepoint_check_flag);
+
+    // notify parent thread
+    osthread->set_state(INITIALIZED);
+    sync->notify_all();
+
+    // wait until os::start_thread()
+    while (osthread->get_state() == INITIALIZED) {
+      sync->wait(Mutex::_no_safepoint_check_flag);
+    }
+  }
+```
+3. 等父进程调用start_thread()后，执行thread->run()，实际调用的是thread_entry。
+
+### 4.开始执行任务
+Thread::start(native_thread)
+1. 更新threadStatus，该状态用于防止并发start
+2. 唤起被阻塞的子线程
+```
+Monitor* sync_with_child = osthread->startThread_lock();  
+MutexLockerEx ml(sync_with_child, Mutex::_no_safepoint_check_flag);  
+sync_with_child->notify();  
+```
+
+到这里线程的启动流程基本上完成。
 
 # 线程interrupt
 
@@ -306,15 +344,4 @@ JVM_END
 ```
 上面的代码可以输出interrupt和hahaha
 
-# java线程在jvm中的表示
 
-线程在jvm最基础的抽象是Thread，其对应的子类包括
-1. JavaThread
-2. vmThread
-3. WatcherThread
-4. GCTaskThread
-5. ConcurrentMarkSweepThread
-
-其中JavaThread是我们在java中通过new Thread()创建的线程。当我们创建了一个线程后，会得到如下的数据
-
-Thread->JavaThread->OSThread，OSThread代表了系统线程。
