@@ -6,7 +6,7 @@ wait、notify、notifyall是jdk提供的进程交互机制。当某个线程通�
 # wait、notify、notifyall一些需要注意的
 
 1. 这三个函数在使用的时候都需要在synchronized关键字内部
-2. notify执行后被唤醒的线程并不会立刻开始执行，而是会等到notify线程退出synchronized代码块后才开始重新执行，竞争锁
+2. notify执行后被唤醒的线程并不会立刻开始执行，而是会等到notify线程退出synchronized代码块后才开始重新执行，竞争锁
 3. jdk的注释表明notify选择线程的过程是随机的，但是在官方的jdk版本中实际上并非随机的，而是按照wait的先后顺序唤醒，也就是说最先wait的线程最先被唤醒。jdk中的原话是 **The choice is arbitrary and occurs at the discretion of the implementation**
 
 这里面的第三点往往是比较容易被人忽视的，如果你写的代码在唤醒的时候依赖随机性，那么很可能会在这里采坑。下面的这个例子可以比较好的解释这种现象，
@@ -95,7 +95,7 @@ t4 reRun
 t4 end
 ```
 
-# wait、notify、notifyall原理
+# wait、notify、notifyall原理
 
 ## wait
 
@@ -130,7 +130,7 @@ void ObjectSynchronizer::wait(Handle obj, jlong millis, TRAPS) {
 
 在获取到重量锁后，调用锁的wait方法，重锁的wait方法比较长，下面摘取其中的关键几个步骤，
 1. 通过CHECK_OWNER检查锁的持有者是否是当前线程，如果不是当前线程则会抛出IllegalMonitorStateException异常。这也就是为什么object.wait()的调用必须在synchronized中。
-2. 检查线程是否已经被中断，如果已经被中断了则直接抛出异常。
+2. 检查线程是否已经被中断，如果已经被中断了则直接抛出异常。
 3. 使用OrderAccess::fence()锁总线，保证不会重排。
 4. 生成ObjectWaiter，然后将其添加到_WaitSet中，_WaitSet是一个双重链表。_WaitSet用于存放所有调用过wait方法的线程。
 5. 使用ObjectMonitor::exit()释放锁。
@@ -339,4 +339,4 @@ notifyall的实现和notify基本类似，不同的是会顺序从_WaitSet中将
 
 # 总结
 
-上面的内容解释了notify/wait大致的工作原理，需要注意的是wait会将当前的对象锁膨胀为重量锁，在性能要求较为严格的场景下需要注意。
+上面的内容解释了notify/wait大致的工作原理，需要注意的是wait会将当前的对象锁膨胀为重量锁，在性能要求较为严格的场景下需要注意。
