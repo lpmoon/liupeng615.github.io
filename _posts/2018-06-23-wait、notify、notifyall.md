@@ -283,7 +283,7 @@ notify的操作大致可以分为以下的几步，
 3. 根据不同的策略将获取到的第一个线程放入到_EntryList或者_cxq中。
 4. 调用wait_reenter_begin
 
-需要注意的是notify只是将进程添加到可运行队列中，而不是真的直接唤醒。实际的唤醒操作在ObjectMonitor::exit中，这个方法会在当前唤醒线程退出Synchronized代码块的时候调用。
+需要注意的是notify只是将进程添加到可运行队列中，而不是真的直接唤醒。实际的唤醒操作在ObjectMonitor::exit中，这个方法会在当前唤醒线程退出Synchronized代码块的时候调用。
 
 实际的唤醒操作的代码再下面的函数中，
 ```
