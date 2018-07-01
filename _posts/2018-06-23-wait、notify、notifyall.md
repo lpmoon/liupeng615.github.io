@@ -134,7 +134,7 @@ void ObjectSynchronizer::wait(Handle obj, jlong millis, TRAPS) {
 3. 使用OrderAccess::fence()锁总线，保证不会重排。
 4. 生成ObjectWaiter，然后将其添加到_WaitSet中，_WaitSet是一个双重链表。_WaitSet用于存放所有调用过wait方法的线程。
 5. 使用ObjectMonitor::exit()释放锁。
-6. 使用PlatformEvent::park()将当前线程挂起，等待其他线程调用notify唤醒当前线程。
+6. 使用PlatformEvent::park()将当前线程挂起，等待其他线程调用notify唤醒当前线程。
 
 ## notify
 
