@@ -40,7 +40,7 @@ sudo apt-get install libasound2-dev
 ```
 bash configure --enable-debug --with-freetype-include=xxx --with-freetype-lib=/usr/local/lib/ 
 ```
-上面的xxx填入你安装的freetype的路径即可。
+上面的xxx填入你安装的freetype的路径即可。--enable-debug模式是fastdebug，如果需要开启slowdebug需要在configure命令后面添加--with-debug-level=slowdebug。
 
 ## make
 ```
